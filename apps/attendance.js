@@ -12,11 +12,11 @@ export class EndfieldAttendance extends plugin {
       priority: 50,
       rule: [
         {
-          reg: '^(?:[:：]|#zmd|#终末地)签到$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))签到$',
           fnc: 'attendance'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)全部签到$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))全部签到$',
           fnc: 'attendance_task',
           permission: 'master'
         }

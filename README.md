@@ -44,7 +44,7 @@ git clone https://github.com/Entropy-Increase-Team/endfield-plugin ./plugins/end
 
 ## 当前功能
 
-命令前缀固定为 `:` / `：` / `#zmd` / `#终末地`，例如 `:帮助` / `#zmd帮助`。
+命令前缀支持 6 种形式：`:` / `：` / `#zmd` / `#终末地` / `/zmd` / `/终末地`，例如 `:帮助` / `#zmd帮助` / `/zmd日历`。
 
 ### 插件基本
 

@@ -24,15 +24,15 @@ export class EndfieldStrategy extends plugin {
       priority: 50,
       rule: [
         {
-          reg: '^(?:[:：]|#zmd|#终末地)攻略列表$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))攻略列表$',
           fnc: 'listStrategy'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)(.+?)攻略$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))(.+?)攻略$',
           fnc: 'queryStrategy'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)(上传攻略|攻略上传)\\s*(\\S+)\\s*(\\S+)(?:\\s*(图片|https?://\\S+))?$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))(上传攻略|攻略上传)\\s*(\\S+)\\s*(\\S+)(?:\\s*(图片|https?://\\S+))?$',
           fnc: 'uploadStrategyImage',
           permission: 'master'
         }
@@ -43,7 +43,7 @@ export class EndfieldStrategy extends plugin {
   /** 从消息中提取攻略名称（「攻略」前的关键词） */
   getStrategyName() {
     let msg = this.e.msg || ''
-    msg = msg.replace(/^([:：]|#zmd|#终末地)\s*/i, '').replace(/攻略$/, '').trim()
+    msg = msg.replace(/^(?:[:：]|[/#](?:zmd|终末地))\s*/i, '').replace(/攻略$/, '').trim()
     return msg
   }
 
@@ -111,7 +111,7 @@ export class EndfieldStrategy extends plugin {
     if (!this.e?.isMaster) return false
     const msg = (this.e.msg || '').trim()
     const after = msg
-      .replace(/^([:：]|#zmd|#终末地)\s*/i, '')
+      .replace(/^(?:[:：]|[/#](?:zmd|终末地))\s*/i, '')
       .replace(/^上传队伍攻略\s*/i, '')
       .replace(/^(?:上传攻略|攻略上传)\s*/i, '')
       .trim()

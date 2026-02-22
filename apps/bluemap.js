@@ -10,7 +10,7 @@ export class EndfieldBluemap extends plugin {
       priority: 50,
       rule: [
         {
-          reg: '^(?:[:：]|#zmd|#终末地)蓝图$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))蓝图$',
           fnc: 'bluemap'
         }
       ]

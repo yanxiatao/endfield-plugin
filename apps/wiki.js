@@ -22,7 +22,7 @@ export class EndfieldWiki extends plugin {
       priority: 50,
       rule: [
         {
-          reg: '^(?:[:：]|#zmd|#终末地)wiki\\s*(.+)$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))wiki\\s*(.+)$',
           fnc: 'queryWiki'
         }
       ]
@@ -35,7 +35,7 @@ export class EndfieldWiki extends plugin {
    */
   getWikiQuery() {
     const msg = (this.e.msg || '').trim()
-    const afterPrefix = msg.replace(/^([:：]|#zmd|#终末地)\s*/i, '').replace(/^wiki\s*/i, '').trim()
+    const afterPrefix = msg.replace(/^(?:[:：]|[/#](?:zmd|终末地))\s*/i, '').replace(/^wiki\s*/i, '').trim()
     if (!afterPrefix) return { subTypeId: '1', name: '' }
     for (const [label, subTypeId] of WIKI.LABELS_SORTED) {
       if (afterPrefix === label || afterPrefix.startsWith(label + ' ') || afterPrefix.startsWith(label)) {

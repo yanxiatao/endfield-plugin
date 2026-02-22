@@ -41,17 +41,17 @@ export class maaend extends plugin {
       event: 'message',
       priority: 50,
       rule: [
-        { reg: '^(?:[:：]|#zmd|#终末地)maa\\s*设备$', fnc: 'deviceList' },
-        { reg: '^(?:[:：]|#zmd|#终末地)maa\\s*绑定$', fnc: 'bindCode' },
-        { reg: '^(?:[:：]|#zmd|#终末地)maa\\s*设置设备(?:\\s*(\\d+))?$', fnc: 'setDefaultDevice' },
-        { reg: '^(?:[:：]|#zmd|#终末地)maa\\s*(?:设备任务|任务列表)(?:\\s*(\\d+))?$', fnc: 'maaTask' },
-        { reg: '^(?:[:：]|#zmd|#终末地)maa\\s*状态(?:\\s+(\\S+))?$', fnc: 'jobStatus' },
-        { reg: '^(?:[:：]|#zmd|#终末地)maa\\s*停止(?:\\s+(\\S+))?$', fnc: 'stopJob' },
-        { reg: '^(?:[:：]|#zmd|#终末地)maa\\s*截图(?:\\s*(\\d+))?$', fnc: 'screenshot' },
-        { reg: '^(?:[:：]|#zmd|#终末地)maa\\s*重置(?:\\s*(\\d+))?$', fnc: 'resetDevice' },
-        { reg: '^(?:[:：]|#zmd|#终末地)maa\\s*删除设备\\s*(\\d+)$', fnc: 'deleteDevice' },
-        { reg: '^(?:[:：]|#zmd|#终末地)maa\\s*(?:执行|运行)(?:\\s+(.+))?$', fnc: 'maaExecDefault' },
-        { reg: '^(?:[:：]|#zmd|#终末地)maa\\s*历史(?:\\s+(\\d+))?(?:\\s+(.+))?$', fnc: 'jobHistory' }
+        { reg: '^(?:[:：]|[/#](?:zmd|终末地))maa\\s*设备$', fnc: 'deviceList' },
+        { reg: '^(?:[:：]|[/#](?:zmd|终末地))maa\\s*绑定$', fnc: 'bindCode' },
+        { reg: '^(?:[:：]|[/#](?:zmd|终末地))maa\\s*设置设备(?:\\s*(\\d+))?$', fnc: 'setDefaultDevice' },
+        { reg: '^(?:[:：]|[/#](?:zmd|终末地))maa\\s*(?:设备任务|任务列表)(?:\\s*(\\d+))?$', fnc: 'maaTask' },
+        { reg: '^(?:[:：]|[/#](?:zmd|终末地))maa\\s*状态(?:\\s+(\\S+))?$', fnc: 'jobStatus' },
+        { reg: '^(?:[:：]|[/#](?:zmd|终末地))maa\\s*停止(?:\\s+(\\S+))?$', fnc: 'stopJob' },
+        { reg: '^(?:[:：]|[/#](?:zmd|终末地))maa\\s*截图(?:\\s*(\\d+))?$', fnc: 'screenshot' },
+        { reg: '^(?:[:：]|[/#](?:zmd|终末地))maa\\s*重置(?:\\s*(\\d+))?$', fnc: 'resetDevice' },
+        { reg: '^(?:[:：]|[/#](?:zmd|终末地))maa\\s*删除设备\\s*(\\d+)$', fnc: 'deleteDevice' },
+        { reg: '^(?:[:：]|[/#](?:zmd|终末地))maa\\s*(?:执行|运行)(?:\\s+(.+))?$', fnc: 'maaExecDefault' },
+        { reg: '^(?:[:：]|[/#](?:zmd|终末地))maa\\s*历史(?:\\s+(\\d+))?(?:\\s+(.+))?$', fnc: 'jobHistory' }
       ]
     })
     this.commonConfig = setting.getConfig('common') || {}
@@ -138,7 +138,7 @@ export class maaend extends plugin {
   }
 
   async setDefaultDevice() {
-    const match = this.e.msg?.match(/^(?:[:：]|#zmd|#终末地)maa\s*设置设备(?:\s*(\d+))?$/)
+    const match = this.e.msg?.match(/^(?:[:：]|[/#](?:zmd|终末地))maa\s*设置设备(?:\s*(\d+))?$/)
     const idx = match?.[1] || ''
     const userId = this.e.user_id
 
@@ -291,7 +291,7 @@ export class maaend extends plugin {
 
   /** 查看设备任务列表：:maa 设备任务/任务列表 [序号] */
   async maaTask() {
-    const match = this.e.msg?.match(/^(?:[:：]|#zmd|#终末地)maa\s*(?:设备任务|任务列表)(?:\s*(\d+))?$/)
+    const match = this.e.msg?.match(/^(?:[:：]|[/#](?:zmd|终末地))maa\s*(?:设备任务|任务列表)(?:\s*(\d+))?$/)
     if (!match) return true
     const deviceIdx = match[1] || null  // null = 使用默认设备
 
@@ -499,7 +499,7 @@ export class maaend extends plugin {
   }
 
   async jobStatus() {
-    const match = this.e.msg?.match(/^(?:[:：]|#zmd|#终末地)maa\s*状态(?:\s+(\S+))?$/)
+    const match = this.e.msg?.match(/^(?:[:：]|[/#](?:zmd|终末地))maa\s*状态(?:\s+(\S+))?$/)
     const rawInput = match?.[1]?.trim() || '1'  // 无参数默认查最近一次任务
     const jobId = await this.resolveJobId(this.e.user_id, rawInput)
     if (!jobId) {
@@ -537,7 +537,7 @@ export class maaend extends plugin {
   }
 
   async stopJob() {
-    const match = this.e.msg?.match(/^(?:[:：]|#zmd|#终末地)maa\s*停止(?:\s+(\S+))?$/)
+    const match = this.e.msg?.match(/^(?:[:：]|[/#](?:zmd|终末地))maa\s*停止(?:\s+(\S+))?$/)
     const rawInput = match?.[1]?.trim() || '1'  // 无参数默认停止最近一次任务
     const jobId = await this.resolveJobId(this.e.user_id, rawInput)
     if (!jobId) {
@@ -555,7 +555,7 @@ export class maaend extends plugin {
   }
 
   async screenshot() {
-    const match = this.e.msg?.match(/^(?:[:：]|#zmd|#终末地)maa\s*截图(?:\s*(\d+))?$/)
+    const match = this.e.msg?.match(/^(?:[:：]|[/#](?:zmd|终末地))maa\s*截图(?:\s*(\d+))?$/)
     const idx = match?.[1] || null  // null = 使用默认设备
     const out = await this.getDeviceByIndex(this.e.user_id, idx)
     if (out.err) {
@@ -574,7 +574,7 @@ export class maaend extends plugin {
   }
 
   async resetDevice() {
-    const match = this.e.msg?.match(/^(?:[:：]|#zmd|#终末地)maa\s*重置(?:\s*(\d+))?$/)
+    const match = this.e.msg?.match(/^(?:[:：]|[/#](?:zmd|终末地))maa\s*重置(?:\s*(\d+))?$/)
     const idx = match?.[1] || null  // null = 使用默认设备
     const out = await this.getDeviceByIndex(this.e.user_id, idx)
     if (out.err) {
@@ -593,7 +593,7 @@ export class maaend extends plugin {
   }
 
   async deleteDevice() {
-    const match = this.e.msg?.match(/^(?:[:：]|#zmd|#终末地)maa\s*删除设备\s*(\d+)$/)
+    const match = this.e.msg?.match(/^(?:[:：]|[/#](?:zmd|终末地))maa\s*删除设备\s*(\d+)$/)
     const idx = match ? match[1] : ''
     if (!idx) {
       await this.reply(getMessage('maaend.delete_usage'))
@@ -618,7 +618,7 @@ export class maaend extends plugin {
 
   /** 在默认设备上执行任务：:maa 执行/运行 <任务名或序号> */
   async maaExecDefault() {
-    const match = this.e.msg?.match(/^(?:[:：]|#zmd|#终末地)maa\s*(?:执行|运行)(?:\s+(.+))?$/)
+    const match = this.e.msg?.match(/^(?:[:：]|[/#](?:zmd|终末地))maa\s*(?:执行|运行)(?:\s+(.+))?$/)
     const taskPart = match ? (match[1] || '').trim() : ''
 
     // 获取默认设备
@@ -649,7 +649,7 @@ export class maaend extends plugin {
   }
 
   async jobHistory() {
-    const match = this.e.msg?.match(/^(?:[:：]|#zmd|#终末地)maa\s*(?:历史)(?:\s+(\d+))?(?:\s+(.+))?$/)
+    const match = this.e.msg?.match(/^(?:[:：]|[/#](?:zmd|终末地))maa\s*(?:历史)(?:\s+(\d+))?(?:\s+(.+))?$/)
     const page = match && match[1] ? parseInt(match[1], 10) : 1
     const deviceIdFilter = match && match[2] ? match[2].trim() : ''
     const req = this.getMaaendReq()

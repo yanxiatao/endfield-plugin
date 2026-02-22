@@ -169,35 +169,35 @@ export class EndfieldUid extends plugin {
       priority: 100,
       rule: [
         {
-          reg: '^(?:[:：]|#zmd|#终末地)扫码(绑定|登陆|登录)$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))扫码(绑定|登陆|登录)$',
           fnc: 'scanQRBind'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)授权(绑定|登陆|登录)$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))授权(绑定|登陆|登录)$',
           fnc: 'authBind'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)(绑定|登陆|登录)列表$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))(绑定|登陆|登录)列表$',
           fnc: 'bindList'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)删除(绑定|登陆|登录)\\s*(\\d+)$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))删除(绑定|登陆|登录)\\s*(\\d+)$',
           fnc: 'deleteBind'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)切换(绑定|登陆|登录)\\s*(\\d+)$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))切换(绑定|登陆|登录)\\s*(\\d+)$',
           fnc: 'switchBind'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)(绑定|登陆|登录)帮助$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))(绑定|登陆|登录)帮助$',
           fnc: 'credHelp'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)手机(绑定|登陆|登录)(\\s*\\d{11})?$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))手机(绑定|登陆|登录)(\\s*\\d{11})?$',
           fnc: 'phoneBind'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)\\d{6}$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))\\d{6}$',
           fnc: 'phoneVerifyCode'
         }
       ]
@@ -687,7 +687,7 @@ export class EndfieldUid extends plugin {
     const cacheText = await redis.get(`ENDFIELD:PHONE_BIND:${this.e.user_id}`)
     if (!cacheText) return false
 
-    const raw = (this.e.msg || '').replace(/^([:：]|#zmd|#终末地)\s*/i, '').trim()
+    const raw = (this.e.msg || '').replace(/^(?:[:：]|[/#](?:zmd|终末地))\s*/i, '').trim()
     const code = /^\d{6}$/.test(raw) ? raw : null
     if (!code) return false
 

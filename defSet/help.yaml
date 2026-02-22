@@ -13,6 +13,8 @@ help_group:
         text: "支持多账号，请使用「:扫码绑定」「:手机绑定」「:授权绑定」完成绑定"
       - title: "切换账号"
         text: "可通过「:切换绑定 <序号>」切换当前激活账号"
+      - title: "命令前缀"
+        text: "支持 : / ： | #zmd / #终末地 | /zmd / /终末地 共 6 种"
       - title: "相关链接"
         text: "官网 {official_website} | 蓝图文档 {bluemap_help}"
   - group: "基础指令"

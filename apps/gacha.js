@@ -31,24 +31,24 @@ export class EndfieldGacha extends plugin {
       priority: 50,
       rule: [
         {
-          reg: '^(?:[:：]|#zmd|#终末地)抽卡记录(?:\\s*(.+))?$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))抽卡记录(?:\\s*(.+))?$',
           fnc: 'viewGachaRecords'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)抽卡分析(?:同步)?(?:\\s+.*)?$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))抽卡分析(?:同步)?(?:\\s+.*)?$',
           fnc: 'viewGachaAnalysis'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)全服抽卡统计(?:\\s+(.+))?$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))全服抽卡统计(?:\\s+(.+))?$',
           fnc: 'globalGachaStats'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)同步全部抽卡$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))同步全部抽卡$',
           fnc: 'syncAllGacha',
           permission: 'master'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)?[1-9]\\d{0,2}$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))?[1-9]\\d{0,2}$',
           fnc: 'receiveGachaSelect',
           log: false
         }
@@ -844,7 +844,7 @@ export class EndfieldGacha extends plugin {
   async globalGachaStats() {
     const pluResPath = this.e?.runtime?.path?.plugin?.['endfield-plugin']?.res || ''
     const msg = (this.e.msg || '').trim()
-    const charNameMatch = msg.match(/(?:[:：]|#zmd|#终末地)全服抽卡统计\s*(.*)$/)
+    const charNameMatch = msg.match(/(?:[:：]|[/#](?:zmd|终末地))全服抽卡统计\s*(.*)$/)
     const charName = (charNameMatch && charNameMatch[1] ? charNameMatch[1].trim() : '') || ''
 
     let data = await hypergryphAPI.getGachaGlobalStats()
@@ -1221,7 +1221,7 @@ export class EndfieldGacha extends plugin {
       await redis.del(GACHA_KEYS.pending(this.e.user_id))
       return true
     }
-    const msg = (this.e.msg || '').trim().replace(/^(?:[:：]|#zmd|#终末地)\s*/, '')
+    const msg = (this.e.msg || '').trim().replace(/^(?:[:：]|[/#](?:zmd|终末地))\s*/, '')
     const index = parseInt(msg, 10)
     if (!Number.isFinite(index) || index < 1 || index > (data.accounts?.length || 0)) {
       await this.reply(getMessage('gacha.invalid_index'))

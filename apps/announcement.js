@@ -127,23 +127,23 @@ export class announcement extends plugin {
       },
       rule: [
         {
-          reg: '^(?:[:：]|#zmd|#终末地)公告最新$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))公告最新$',
           fnc: 'latest'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)公告\\s*(\\d+)$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))公告\\s*(\\d+)$',
           fnc: 'detailByIndex'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)公告$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))公告$',
           fnc: 'list'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)(订阅公告|公告订阅)\\s*群聊$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))(订阅公告|公告订阅)\\s*群聊$',
           fnc: 'subscribeGroup'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)(取消订阅公告|公告取消订阅)$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))(取消订阅公告|公告取消订阅)$',
           fnc: 'unsubscribeGroup'
         }
       ]

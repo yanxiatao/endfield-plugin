@@ -36,7 +36,7 @@ export class endfieldTutorial extends plugin {
       event: 'message',
       priority: 50,
       rule: [
-        { reg: '^(?:[:：]|#zmd|#终末地)maa\\s*教程$', fnc: 'maaTutorial' }
+        { reg: '^(?:[:：]|[/#](?:zmd|终末地))maa\\s*教程$', fnc: 'maaTutorial' }
       ]
     })
   }

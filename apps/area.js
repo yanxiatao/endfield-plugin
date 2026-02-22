@@ -13,11 +13,11 @@ export class EndfieldArea extends plugin {
       priority: 50,
       rule: [
         {
-          reg: '^(?:[:：]|#zmd|#终末地)地区建设$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))地区建设$',
           fnc: 'getArea'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)帝江号建设$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))帝江号建设$',
           fnc: 'getSpaceship'
         }
       ]

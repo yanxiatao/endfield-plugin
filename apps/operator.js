@@ -42,11 +42,11 @@ export class EndfieldOperator extends plugin {
       priority: 50,
       rule: [
         {
-          reg: '^(?:[:：]|#zmd|#终末地)干员列表$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))干员列表$',
           fnc: 'getOperatorList'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)(.+?)面板$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))(.+?)面板$',
           fnc: 'getOperator'
         }
       ]
@@ -269,7 +269,7 @@ export class EndfieldOperator extends plugin {
 
   getOperatorNameFromMsg() {
     let s = (this.e.msg || '').replace(/面板$/, '').trim()
-    s = s.replace(/^([:：]|#zmd|#终末地)\s*/i, '').trim()
+    s = s.replace(/^(?:[:：]|[/#](?:zmd|终末地))\s*/i, '').trim()
     return s
   }
 

@@ -11,7 +11,7 @@ export class help extends plugin {
       priority: 10,
       rule: [
         {
-          reg: '^(?:[:：]|#zmd|#终末地)(帮助|help)$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))(帮助|help)$',
           fnc: 'help'
         }
       ]

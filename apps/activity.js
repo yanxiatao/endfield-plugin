@@ -177,7 +177,7 @@ export class EndfieldActivity extends plugin {
       priority: 50,
       rule: [
         {
-          reg: '^(?:[:：]|#zmd|#终末地)日历$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))日历$',
           fnc: 'getActivityList'
         }
       ]

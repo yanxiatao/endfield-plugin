@@ -55,7 +55,7 @@ export class EndfieldRedisClean extends plugin {
       priority: 50,
       rule: [
         {
-          reg: '^(?:[:：]|#zmd|#终末地)redis清理$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))redis清理$',
           fnc: 'cleanRedis',
           permission: 'master'
         }

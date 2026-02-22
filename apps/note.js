@@ -12,7 +12,7 @@ export class EndfieldNote extends plugin {
       priority: 50,
       rule: [
         {
-          reg: '^(?:[:：]|#zmd|#终末地)便签$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))便签$',
           fnc: 'getNote'
         }
       ]

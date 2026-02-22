@@ -26,7 +26,7 @@ export class EndfieldUpdate extends plugin {
       priority: 50,
       rule: [
         {
-          reg: '^(?:[:：]|#zmd|#终末地)((插件)?(强制)?更新|update)$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))((插件)?(强制)?更新|update)$',
           fnc: 'update',
           permission: 'master'
         }

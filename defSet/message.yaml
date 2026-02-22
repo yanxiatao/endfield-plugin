@@ -6,7 +6,7 @@
 # 帮助页与蓝图
 bluemap_help_doc: "https://www.kdocs.cn/l/caI2H6e4APLS"
 official_website: "https://end.shallow.ink"
-prefixTips: "命令前缀支持 : | ： | #终末地 | #zmd"
+prefixTips: "命令前缀支持 : | ： | #zmd | #终末地 | /zmd | /终末地"
 
 # 未绑定账号时的提示信息
 unbind_message: |

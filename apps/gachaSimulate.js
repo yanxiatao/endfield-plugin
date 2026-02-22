@@ -39,15 +39,15 @@ export class EndfieldGachaSimulate extends plugin {
       priority: 50,
       rule: [
         {
-          reg: `^(?:[:：]|#zmd|#终末地)${SIMULATE_CMD_SUFFIX}`,
+          reg: `^(?:[:：]|[/#](?:zmd|终末地))${SIMULATE_CMD_SUFFIX}`,
           fnc: 'simulateDispatch'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)(重置抽卡|抽卡重置)$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))(重置抽卡|抽卡重置)$',
           fnc: 'resetSimulateGacha'
         },
         {
-          reg: '^(?:[:：]|#zmd|#终末地)重置全员抽卡$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))重置全员抽卡$',
           fnc: 'resetAllSimulateGacha',
           permission: 'master'
         }
