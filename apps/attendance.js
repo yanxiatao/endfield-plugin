@@ -151,13 +151,14 @@ export class EndfieldAttendance extends plugin {
       await this.e.reply(getMessage('attendance.task_start'))
     }
 
+    // 第一轮：遍历所有账号进行签到，失败的只记录不重试
     for (let key of keys) {
       const user_id = key.replace(/ENDFIELD:USER:/g, '')
       const allUsers = await EndfieldUser.getAllUsers(user_id)
 
       if (allUsers.length === 0) {
         fail_count += 1
-        fail_users.push(user_id)
+        fail_users.push({ user_id, sklUser: null, reason: '未找到绑定账号' })
         continue
       }
 
@@ -169,7 +170,7 @@ export class EndfieldAttendance extends plugin {
 
           if (!res || res.code !== 0) {
             fail_count += 1
-            fail_users.push(`${user_id}(${sklUser.nickname || sklUser.endfield_uid})`)
+            fail_users.push({ user_id, sklUser, reason: res?.message || '请求失败' })
             continue
           }
 
@@ -181,19 +182,64 @@ export class EndfieldAttendance extends plugin {
           success_count += 1
         } catch (err) {
           fail_count += 1
-          fail_users.push(`${user_id}(${sklUser.nickname || sklUser.endfield_uid})`)
+          fail_users.push({ user_id, sklUser, reason: err?.message || '签到异常' })
         }
       }
     }
 
-    let completeMsg = getMessage('attendance.task_complete', {
-      total: keys.length,
-      signed: signed_count,
-      success: success_count,
-      fail: fail_count
-    })
+    // 第二轮：所有账号签到完成后，对失败的账号进行重试
     if (fail_users.length > 0) {
-      completeMsg += getMessage('attendance.task_complete_fail_users', { fail_users: fail_users.join('\n') })
+      logger.mark(`[终末地插件][签到任务]第一轮完成，开始重试 ${fail_users.length} 个失败账号`)
+      const retry_fail_users = []
+      
+      for (const failItem of fail_users) {
+        if (!failItem.sklUser) {
+          retry_fail_users.push(failItem)
+          continue
+        }
+        
+        await common.sleep(3000)
+        try {
+          const res = await failItem.sklUser.sklReq.getData('endfield_attendance')
+
+          if (!res || res.code !== 0) {
+            retry_fail_users.push(failItem)
+            continue
+          }
+
+          if (res.data?.already_signed) {
+            signed_count += 1
+            fail_count -= 1
+            continue
+          }
+
+          success_count += 1
+          fail_count -= 1
+          logger.mark(`[终末地插件][签到任务]重试成功: ${failItem.user_id}(${failItem.sklUser.nickname || failItem.sklUser.endfield_uid})`)
+        } catch (err) {
+          retry_fail_users.push(failItem)
+        }
+      }
+
+      // 更新最终失败列表
+      fail_users.length = 0
+      fail_users.push(...retry_fail_users)
+    }
+
+    // 格式化报告
+    let completeMsg = '[ 签到任务报告 ]\n─────────\n'
+    completeMsg += `总计账号 ${keys.length}\n`
+    completeMsg += `今日已签 ${signed_count}\n`
+    completeMsg += `本次成功 ${success_count}\n`
+    completeMsg += `本次失败 ${fail_count}\n`
+    completeMsg += '─────────'
+    
+    if (fail_users.length > 0) {
+      completeMsg += '\n\n失败账号:\n'
+      completeMsg += fail_users.map(f => {
+        const label = f.sklUser ? `${f.user_id}(${f.sklUser.nickname || f.sklUser.endfield_uid})` : f.user_id
+        return `${label}`
+      }).join('\n')
     }
 
     logger.mark(`[终末地插件][签到任务]任务完成：${keys.length}个\n已签：${signed_count}个\n成功：${success_count}个\n失败：${fail_count}个`)
