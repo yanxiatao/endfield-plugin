@@ -32,20 +32,40 @@
     <!-- 统计概览 -->
     <div class="stats-row">
       <div class="stat-item">
-        <span class="stat-num">{{totalCount}}</span>
-        <span class="stat-label">总抽数</span>
+        <div class="stat-content">
+          <span class="stat-label-top">总抽数</span>
+          <span class="stat-num">{{totalCount}}</span>
+        </div>
       </div>
-      <div class="stat-item stat-6">
-        <span class="stat-num">{{star6}}</span>
-        <span class="stat-label">6星</span>
+      <div class="stat-item stat-stars">
+        <div class="stat-content">
+          <span class="stat-label-top">6星 / 5星 / 4星</span>
+          <div class="stat-stars-row">
+            <span class="star-item star-6">{{star6}}</span>
+            <span class="stat-separator">/</span>
+            <span class="star-item star-5">{{star5}}</span>
+            <span class="stat-separator">/</span>
+            <span class="star-item star-4">{{star4}}</span>
+          </div>
+        </div>
       </div>
-      <div class="stat-item stat-5">
-        <span class="stat-num">{{star5}}</span>
-        <span class="stat-label">5星</span>
+      <div class="stat-item stat-limited">
+        <div class="stat-content">
+          <span class="stat-label-top">特许寻访 · 平均出红</span>
+          <span class="stat-num">{{limitedAvgCost}}</span>
+        </div>
       </div>
-      <div class="stat-item stat-4">
-        <span class="stat-num">{{star4}}</span>
-        <span class="stat-label">4星</span>
+      <div class="stat-item stat-weapon">
+        <div class="stat-content">
+          <span class="stat-label-top">武器池 · 平均出红</span>
+          <span class="stat-num">{{weaponAvgCost}}</span>
+        </div>
+      </div>
+      <div class="stat-item stat-standard">
+        <div class="stat-content">
+          <span class="stat-label-top">常驻寻访 · 平均出红</span>
+          <span class="stat-num">{{standardAvgCost}}</span>
+        </div>
       </div>
     </div>
 
@@ -71,7 +91,7 @@
           <span class="pool-entry-name">{{$value.poolName}}</span>
         </div>
         <div class="pool-entry-metrics">
-          <span class="metric">{{$value.total}} 抽数</span>
+          <span class="metric">{{$value.totalSummary || ('合计 ' + $value.total + ' 抽')}}</span>
           <span class="metric">{{$value.metric1Label}} {{$value.metric1}}</span>
           <span class="metric">{{$value.metric2Label}} {{$value.metric2}}</span>
         </div>
@@ -98,7 +118,7 @@
             <div class="bar-wrap">
               {{if $value.refLinePercent != null}}<div class="bar-ref" style="left: {{$value.refLinePercent}}%;"></div>{{/if}}
               <div class="bar-inner bar-level-{{$value.barColorLevel || 'green'}}{{if $value.barPercent < 100}} bar-not-full{{/if}}" style="width: {{$value.barPercent || 50}}%;">
-                <span class="bar-text">{{$value.pullCount}}抽</span>
+                <span class="bar-text">{{if $value.tag === '免费'}}免费 {{$value.pullCount}}抽{{else}}{{$value.pullCount}}抽{{/if}}</span>
               </div>
             </div>
             <span class="star6-tag star6-tag-{{$value.badgeColor || 'normal'}}">{{$value.tag || ''}}</span>
@@ -107,7 +127,11 @@
           {{/if}}
           {{if $value.freeTotal > 0}}
           <div class="star6-row free-row">
+            {{if $value.freeCharAvatar}}
+            <img class="star6-icon" src="{{$value.freeCharAvatar}}" alt="{{$value.freeCharName}}" onerror="this.style.display='none'">
+            {{else}}
             <div class="star6-icon star6-icon-free">×</div>
+            {{/if}}
             <div class="bar-wrap">
               <div class="bar-inner bar-level-free bar-not-full" style="width: {{$value.freeBarPercent}}%;">
                 <span class="bar-text">免费 - {{$value.freeTotal}}抽</span>
