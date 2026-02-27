@@ -153,10 +153,10 @@ export class EndfieldGacha extends plugin {
     }
 
     // 检查是否有数据
-    const statsData = await hypergryphAPI.getGachaStats(sklUser.framework_token)
-    const hasRecord = statsData?.has_records === true ||
-      (statsData?.last_fetch != null && String(statsData.last_fetch).trim() !== '') ||
-      ((statsData?.stats?.total_count ?? 0) > 0)
+    const checkStatsData = await hypergryphAPI.getGachaStats(sklUser.framework_token)
+    const hasRecord = checkStatsData?.has_records === true ||
+      (checkStatsData?.last_fetch != null && String(checkStatsData.last_fetch).trim() !== '') ||
+      ((checkStatsData?.stats?.total_count ?? 0) > 0)
 
     // 如果需要同步或没有数据，则执行同步
     if (wantsSync || !hasRecord) {
@@ -228,7 +228,7 @@ export class EndfieldGacha extends plugin {
       { key: 'weapon', label: '武器池' },
       { key: 'limited', label: '限定角色' }
     ]
-    const [statsData, noteRes, ...poolResults] = await Promise.all([
+    const [recordStatsData, noteRes, ...poolResults] = await Promise.all([
       hypergryphAPI.getGachaStats(sklUser.framework_token),
       sklUser.sklReq.getData('note').catch(() => null),
       ...poolList.map(({ key }) =>
@@ -236,13 +236,13 @@ export class EndfieldGacha extends plugin {
       )
     ])
 
-    if (!statsData) {
+    if (!recordStatsData) {
       await this.reply(getMessage('gacha.no_records'))
       return true
     }
 
-    const stats = statsData.stats || {}
-    const userInfo = statsData.user_info || {}
+    const stats = recordStatsData.stats || {}
+    const userInfo = recordStatsData.user_info || {}
     const noteBase = noteRes?.code === 0 ? (noteRes.data?.base || {}) : {}
 
     // 判断是否为 UP 角色/武器
