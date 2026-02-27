@@ -9,7 +9,7 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 html, body {
-  width: 580px;
+  width: 1500px;
   overflow-x: hidden;
   background: #f0f1f3;
   font-family: 'HarmonyOS Sans SC', -apple-system, BlinkMacSystemFont, 'Microsoft YaHei', sans-serif;
@@ -17,7 +17,7 @@ html, body {
 }
 
 .gacha-analysis-container {
-  width: 580px;
+  width: 1500px;
   padding: 14px 16px 6px;
 }
 
@@ -154,12 +154,18 @@ html, body {
 }
 
 /* ========== 池组 ========== */
+.pool-groups-container {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
 .pool-group {
   background: #fff;
   border-radius: 10px;
   border: 1px solid #e5e7eb;
   padding: 14px 16px;
-  margin-bottom: 10px;
 }
 
 .pool-group:last-of-type {

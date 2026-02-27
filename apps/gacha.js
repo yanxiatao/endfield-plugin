@@ -13,13 +13,28 @@ const GACHA_KEYS = {
 }
 const SYNC_MS = { pollInterval: 1500, pollTimeout: Infinity }
 
-/** 保底与进度条：角色池小保底 80、大保底 120；武器池保底 31～40、进度条满 40 */
+/**
+ * 保底常量
+ * - charSoft: 6星小保底（80抽触发硬保底）
+ * - charProbBoost: 概率提升区起点（65抽后）
+ * - charHard: UP大保底（120抽必出UP）
+ * - charFiveStar: 5星保底（10抽）
+ * - weaponSessionHard: 武器池6星硬保底（4次十连）
+ * - weaponUpHard: 武器池UP硬保底（8次十连）
+ * - specialMilestone60: 限定池60抽情报手册
+ * - specialMilestone120: 限定池120抽UP大保底
+ * - specialMilestone240: 限定池240抽代币
+ */
 const PITY = {
   charSoft: 80,
+  charProbBoost: 65,
   charHard: 120,
-  weaponMax: 40,
-  weaponBaodiMin: 31,
-  weaponBaodiMax: 40
+  charFiveStar: 10,
+  weaponSessionHard: 4,
+  weaponUpHard: 8,
+  specialMilestone60: 60,
+  specialMilestone120: 120,
+  specialMilestone240: 240,
 }
 
 export class EndfieldGacha extends plugin {
@@ -31,11 +46,11 @@ export class EndfieldGacha extends plugin {
       priority: 50,
       rule: [
         {
-          reg: '^(?:[:：]|[/#](?:zmd|终末地))抽卡记录(?:\\s*(.+))?$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))(?:同步)?抽卡记录(?:\\s*(.+))?$',
           fnc: 'viewGachaRecords'
         },
         {
-          reg: '^(?:[:：]|[/#](?:zmd|终末地))抽卡分析(?:同步)?(?:\\s+.*)?$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))抽卡分析(?:\\s+.*)?$',
           fnc: 'viewGachaAnalysis'
         },
         {
@@ -59,7 +74,8 @@ export class EndfieldGacha extends plugin {
   /**
    * 从 /api/bili-wiki/activities 获取当期 UP：仅取 is_active 为 true 的活动，
    * 按 API 文档使用 up 字段：特许寻访为 UP 角色名，武库申领为 UP 武器名。
-   * 返回 { upCharNames, upCharName, upWeaponName, activeCharPoolName, activeWeaponPoolName }；
+   * 返回 { upCharNames, upCharName, upWeaponName, activeCharPoolName, activeWeaponPoolName, poolUpMap, charPoolOrderByTime }；
+   * charPoolOrderByTime：特许寻访池名按 start_time 升序，用于抽卡分析展示顺序（熔火灼痕 → 轻飘飘的信使 → 热烈色彩）。
    * 失败或未配置 api_key 时返回 null。
    */
   async getCurrentUpFromBiliWiki() {
@@ -101,23 +117,58 @@ export class EndfieldGacha extends plugin {
         const upStr = String(a.up).trim()
         if (pName && upStr) poolUpMap[pName] = upStr
       }
+      // 特许寻访池按 start_time 升序，用于抽卡分析 UP 池展示顺序（与 activities 接口时间顺序一致）
+      const parseStartTime = (s) => {
+        if (!s || typeof s !== 'string') return 0
+        const normalized = String(s).trim().replace(/\//g, '-')
+        const t = new Date(normalized).getTime()
+        return Number.isFinite(t) ? t : 0
+      }
+      const charActivities = list.filter((a) => (a?.type || '') === '特许寻访')
+      const charPoolOrderByTime = charActivities
+        .map((a) => {
+          const pIdx = a?.name?.indexOf('·')
+          const pName = pIdx !== -1 ? a.name.slice(pIdx + 1).trim() : (a?.name || '').trim()
+          return { pName, start_time: parseStartTime(a?.start_time) }
+        })
+        .filter((x) => x.pName)
+        .sort((a, b) => a.start_time - b.start_time)
+        .map((x) => x.pName)
       const upCharName = upCharNames.length > 0 ? upCharNames.join('、') : ''
-      return { upCharNames, upCharName, upWeaponName, activeCharPoolName, activeWeaponPoolName, poolUpMap }
+      return { upCharNames, upCharName, upWeaponName, activeCharPoolName, activeWeaponPoolName, poolUpMap, charPoolOrderByTime }
     } catch (e) {
       logger.error(`[终末地插件][抽卡] getCurrentUpFromBiliWiki 失败: ${e?.message || e}`)
       return null
     }
   }
 
-  /** 查看抽卡记录：四个卡池合并到一张图中展示，支持 :抽卡记录 <页码> */
+  /** 查看抽卡记录：四个卡池合并到一张图中展示，支持 :抽卡记录 <页码>；带「同步」则先同步再展示 */
   async viewGachaRecords() {
+    const wantsSync = /同步/.test(this.e.msg || '')
+    
     const sklUser = new EndfieldUser(this.e.user_id)
     if (!(await sklUser.getUser())) {
       await this.reply(getUnbindMessage())
       return true
     }
+
+    // 检查是否有数据
+    const statsData = await hypergryphAPI.getGachaStats(sklUser.framework_token)
+    const hasRecord = statsData?.has_records === true ||
+      (statsData?.last_fetch != null && String(statsData.last_fetch).trim() !== '') ||
+      ((statsData?.stats?.total_count ?? 0) > 0)
+
+    // 如果需要同步或没有数据，则执行同步
+    if (wantsSync || !hasRecord) {
+      await this.reply(getMessage('gacha.sync_start'))
+      return await this.syncGacha({
+        afterSyncShowRecords: true,
+        selectPrompt: getMessage('gacha.select_account_sync')
+      })
+    }
+
     // 解析页码参数
-    const argStr = (this.e.msg || '').replace(/.*抽卡记录\s*/, '').trim()
+    const argStr = (this.e.msg || '').replace(/.*抽卡记录(?:同步)?\s*/, '').trim()
     const page = (argStr && Number.isFinite(parseInt(argStr, 10))) ? Math.max(1, parseInt(argStr, 10)) : 1
     const limit = 10
     const pluResPath = this.e?.runtime?.path?.plugin?.['endfield-plugin']?.res || ''
@@ -280,33 +331,33 @@ export class EndfieldGacha extends plugin {
     return true
   }
 
-  /** 抽卡分析：不带「同步」则仅用已有数据出图；带「同步」才走同步流程（多账号选择、增量同步、同步完成后出图） */
+  /** 抽卡分析：直接拉取当前账号的 stats 并出图，无数据时自动同步 */
   async viewGachaAnalysis() {
-    const wantsSync = /同步/.test(this.e.msg || '')
-    if (!wantsSync) {
-      // 不同步：直接拉取当前账号的 stats 并出图，无数据时提示先同步
-      const sklUser = new EndfieldUser(this.e.user_id)
-      if (!(await sklUser.getUser())) {
-        await this.reply(getUnbindMessage())
-        return true
-      }
-      const statsData = await hypergryphAPI.getGachaStats(sklUser.framework_token)
-      const hasRecord = statsData?.has_records === true ||
-        (statsData?.last_fetch != null && String(statsData.last_fetch).trim() !== '') ||
-        ((statsData?.stats?.total_count ?? 0) > 0)
-      if (!statsData || !hasRecord) {
-        await this.reply(getMessage('gacha.analysis_need_sync'))
-        return true
-      }
-      await this.renderGachaAnalysisAndReply(statsData)
+    const sklUser = new EndfieldUser(this.e.user_id)
+    if (!(await sklUser.getUser())) {
+      await this.reply(getUnbindMessage())
       return true
     }
-    await this.reply(getMessage('gacha.analysis_sync_start'))
-    return await this.syncGacha({
-      afterSyncSendAnalysis: true,
-      fromAnalysis: true,
-      selectPrompt: getMessage('gacha.select_account_sync')
-    })
+    
+    // 检查是否有数据
+    const statsData = await hypergryphAPI.getGachaStats(sklUser.framework_token)
+    const hasRecord = statsData?.has_records === true ||
+      (statsData?.last_fetch != null && String(statsData.last_fetch).trim() !== '') ||
+      ((statsData?.stats?.total_count ?? 0) > 0)
+    
+    // 如果没有数据，自动执行同步
+    if (!statsData || !hasRecord) {
+      await this.reply(getMessage('gacha.analysis_sync_start'))
+      return await this.syncGacha({
+        afterSyncSendAnalysis: true,
+        fromAnalysis: true,
+        selectPrompt: getMessage('gacha.select_account_sync')
+      })
+    }
+    
+    // 有数据则直接出图
+    await this.renderGachaAnalysisAndReply(statsData)
+    return true
   }
 
   /** 根据 statsData 拉取 note/wiki/records 并制图或文字回复（抽卡分析用；同步完成后也会调用）；options.syncMsg 时将文字与图片合并为一条消息；options.targetUserId 指定查询目标用户 */
@@ -406,16 +457,29 @@ export class EndfieldGacha extends plugin {
       const isLimitedPool = isLimited || (isChar && effectiveUpCharNames.length > 0)
       const total = records.length
       const isWeapon = !isChar
-      const sorted = [...records].sort((a, b) => String(a.seq_id || '').localeCompare(String(b.seq_id || ''), undefined, { numeric: true }))
-      // === 分析统计（对齐 endfield-gacha）===
+      // 按 seq_id 数字升序排列
+      const sorted = [...records].sort((a, b) => {
+        const na = Number(a.seq_id)
+        const nb = Number(b.seq_id)
+        if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb
+        return String(a.seq_id || '').localeCompare(String(b.seq_id || ''), undefined, { numeric: true })
+      })
+      // === 分析统计：免费十连不计入保底 ===
       const countsByRarity = { 6: 0, '6_std': 0, 5: 0, 4: 0 }
       const upSixStarPullsDetail = []
+      // analysisPity：距上次6星的付费抽数（免费不计）
+      // analysisCumulative：当前池付费累计抽数（用于大保底判断）
       let analysisPity = 0
       let analysisCumulative = 0
       let analysisHasGotUpBefore120 = false
+      let paidTotal = 0
       for (const r of sorted) {
-        analysisPity++
-        analysisCumulative++
+        const isFree = r.is_free === true
+        if (!isFree) {
+          analysisPity++
+          analysisCumulative++
+          paidTotal++
+        }
         if (r.rarity === 6) {
           const cname = String(r.char_name || r.item_name || '').trim()
           let isUp = false
@@ -424,17 +488,22 @@ export class EndfieldGacha extends plugin {
           } else if (isWeapon && effectiveUpWeaponName) {
             isUp = cname === effectiveUpWeaponName || cname.includes(effectiveUpWeaponName) || effectiveUpWeaponName.includes(cname)
           }
+          // 大保底：付费累计 >= 120 且未在 120 前获得过 UP，则为 Spark
           let isSpark = false
-          if (isLimited && isUp && analysisCumulative === PITY.charHard && !analysisHasGotUpBefore120) {
+          if (isLimited && !isFree && isUp && analysisCumulative >= PITY.charHard && !analysisHasGotUpBefore120) {
             isSpark = true
           }
-          if (isUp && analysisCumulative < PITY.charHard) {
+          if (!isFree && isUp && analysisCumulative < PITY.charHard) {
             analysisHasGotUpBefore120 = true
           }
           if (isUp) countsByRarity[6]++
           else countsByRarity['6_std']++
-          if (isUp) upSixStarPullsDetail.push({ count: analysisPity, isSpark, name: cname })
-          analysisPity = 0
+          if (isUp && !isFree) upSixStarPullsDetail.push({ count: analysisPity, isSpark, name: cname })
+          if (!isFree) {
+            analysisPity = 0
+            // 出 UP 后重置大保底计数
+            if (isUp) analysisCumulative = 0
+          }
         } else if (r.rarity === 5) {
           countsByRarity[5]++
         } else {
@@ -446,24 +515,26 @@ export class EndfieldGacha extends plugin {
       const sparkCount = upSixStarPullsDetail.filter(p => p.isSpark).length
       // 不歪率
       const analysisWinRate = totalStar6 > 0 ? ((countsByRarity[6] / totalStar6) * 100).toFixed(1) + '%' : '-'
-      // 平均UP花费（排除 Spark）
+      // 平均UP花费（排除 Spark，仅计付费抽）
       const upPullsExcludingSpark = upSixStarPullsDetail.filter(p => !p.isSpark)
       const avgUpCost = upPullsExcludingSpark.length > 0
         ? Math.round(upPullsExcludingSpark.reduce((s, p) => s + p.count, 0) / upPullsExcludingSpark.length) + '抽'
         : '-'
-      // 每红花费（所有6星，按有效抽数）
-      const avgAllCost = totalStar6 > 0 ? Math.round(total / totalStar6) + '抽' : '-'
+      // 每红花费（按付费抽数，排除免费十连）
+      const avgAllCost = totalStar6 > 0 ? Math.round(paidTotal / totalStar6) + '抽' : '-'
       // metric2
       let metric2 = metric2Default !== undefined ? (metric2Default ?? totalStar6) : totalStar6
       if (showNotWaiRate && totalStar6 > 0) {
         metric2 = analysisWinRate
       }
+      // 图片段：遍历付费记录，免费记录不计入垫抽数
       let pullsSinceLast6 = 0
       for (const r of sorted) {
-        pullsSinceLast6 += 1
+        if (r.is_free !== true) pullsSinceLast6 += 1
         if (r.rarity === 6) {
           const id = r.char_id || ''
           const name = (r.char_name || r.item_name || '').trim() || id
+          // 单池内垫抽数（限定池跨期共享垫抽数在后续步骤中覆盖当前限定池 UP 卡片的展示值）
           const pullCount = pullsSinceLast6
           let tag = ''
           let badgeColor = 'normal'
@@ -486,26 +557,28 @@ export class EndfieldGacha extends plugin {
           } else if (isWeapon && (effectiveUpWeaponName || !noWaiTag)) {
             // 星声申领无 UP/歪概念，不显示歪与不歪标签
             const isStarlightPool = poolName && poolName.includes('星声申领')
-            if (isStarlightPool) {
-              tag = ''
-              badgeColor = 'normal'
-            } else {
+            if (!isStarlightPool) {
+              // 武器池按"申领次数"（十连）计数：4次内必出6星，8次内必出UP
+              // pullCount 此处为付费单抽数，转换为十连次数估算
+              const sessionCount = Math.ceil(pullCount / 10)
               const isUp = effectiveUpWeaponName && String(name).trim() === effectiveUpWeaponName
-              if (pullCount >= PITY.weaponBaodiMin && pullCount <= PITY.weaponBaodiMax) {
+              if (sessionCount >= PITY.weaponSessionHard) {
                 tag = '保底'
                 badgeColor = 'baodi'
-              } else if (pullCount < PITY.weaponBaodiMin && effectiveUpWeaponName && !isUp) {
+              } else if (effectiveUpWeaponName && !isUp) {
                 tag = '歪'
                 badgeColor = 'wai'
-              } else if (pullCount < PITY.weaponBaodiMin && isUp) {
+              } else if (isUp) {
                 tag = 'UP'
                 badgeColor = 'up'
               }
             }
           }
-          const maxPity = isLimited ? PITY.charHard : (isWeapon ? PITY.weaponMax : PITY.charSoft)
+          // 进度条：限定池以120为满，角色池以80为满，武器池以4次十连(40抽)为满
+          const maxPity = isLimited ? PITY.charHard : (isWeapon ? PITY.weaponSessionHard * 10 : PITY.charSoft)
           const barPercent = Math.min(100, Math.round((pullCount / maxPity) * 100))
-          const colorScale = isWeapon ? PITY.weaponMax : PITY.charSoft
+          // 颜色阈值：65抽后进入概率提升区（角色池），武器池按比例
+          const colorScale = isWeapon ? PITY.weaponSessionHard * 10 : PITY.charProbBoost
           const colorPercent = Math.min(100, (pullCount / colorScale) * 100)
           const barColorLevel = colorPercent < 50 ? 'green' : colorPercent < 80 ? 'yellow' : 'red'
           const refLinePercent = isLimited ? (PITY.charSoft / PITY.charHard) * 100 : (isWeapon ? 100 : null)
@@ -520,15 +593,17 @@ export class EndfieldGacha extends plugin {
           if (images.length >= 6) break
         }
       }
+      // 垫抽数：仅计付费记录
+      const paidSorted = sorted.filter(r => r.is_free !== true)
       let pitySinceLast6 = null
-      const last6Idx = sorted.map((r, i) => (r.rarity === 6 ? i : -1)).filter((i) => i >= 0).pop()
-      if (last6Idx != null) {
-        pitySinceLast6 = sorted.length - last6Idx - 1
+      const lastPaid6Idx = paidSorted.map((r, i) => (r.rarity === 6 ? i : -1)).filter((i) => i >= 0).pop()
+      if (lastPaid6Idx != null) {
+        pitySinceLast6 = paidSorted.length - lastPaid6Idx - 1
       } else {
-        pitySinceLast6 = sorted.length
+        pitySinceLast6 = paidSorted.length
       }
-      // 有效抽数：剔除最后一次出红之后的垫抽，用于总抽数展示和每红花费计算
-      const effectiveTotal = (star6 > 0 && pitySinceLast6 != null) ? total - pitySinceLast6 : total
+      // 有效付费抽数：剔除最后一次出红之后的垫抽，用于每红花费计算
+      const effectiveTotal = (star6 > 0 && pitySinceLast6 != null) ? paidTotal - pitySinceLast6 : paidTotal
       // 二级池子内六星记录倒序：刚出的显示在最顶上
       images.reverse()
       return { poolName, total, star6, effectiveTotal, metric2, images, pitySinceLast6, counts: countsByRarity, winRate: analysisWinRate, avgUpCost, avgAllCost, sparkCount }
@@ -610,7 +685,26 @@ export class EndfieldGacha extends plugin {
       const freeRecords = charFreeByPoolName[subPoolName] || []
       const freeStarImgs = buildFreeStarImages(freeRecords, true)
       const mergedImages = [...entry.images, ...freeStarImgs]
-      // 总抽数展示含已垫抽数；每红花费按有效抽数（不含垫抽）计算
+      // 限定池里程碑
+      // 免费十连不计入：60抽情报手册、120抽UP大保底、每240抽代币
+      const paidCount = groupRecords.length
+      const specialMilestones = isLimited ? (() => {
+        const hasUp6 = entry.counts[6] > 0
+        const pullsToUp120 = hasUp6 ? 0 : Math.max(0, PITY.specialMilestone120 - paidCount)
+        const hasInfoBook60 = paidCount >= PITY.specialMilestone60
+        const pullsToInfoBook60 = hasInfoBook60 ? 0 : Math.max(0, PITY.specialMilestone60 - paidCount)
+        const token240Times = Math.floor(paidCount / PITY.specialMilestone240)
+        const nextTokenAt = (token240Times + 1) * PITY.specialMilestone240
+        const pullsToNextToken240 = Math.max(0, nextTokenAt - paidCount)
+        return { paidCount, hasUp6, pullsToUp120, hasInfoBook60, pullsToInfoBook60, token240Times, pullsToNextToken240 }
+      })() : undefined
+      // 5星保底：10抽内必出5星
+      const paidSortedForFive = [...groupRecords].filter(r => r.is_free !== true).sort((a, b) => Number(a.seq_id) - Number(b.seq_id))
+      let pityTo5Star = 0
+      for (const r of paidSortedForFive) {
+        pityTo5Star++
+        if (r.rarity >= 5) pityTo5Star = 0
+      }
       charPoolEntries.push({
         poolName: entry.poolName,
         total: entry.total,
@@ -621,58 +715,168 @@ export class EndfieldGacha extends plugin {
         metric2Label,
         images: mergedImages,
         pitySinceLast6: entry.pitySinceLast6,
+        pityTo5Star,
+        isInProbBoostZone: (entry.pitySinceLast6 ?? 0) >= PITY.charProbBoost,
+        isHardPity: (entry.pitySinceLast6 ?? 0) >= PITY.charSoft,
         pityBarPercent: entry.pitySinceLast6 != null ? Math.min(100, Math.round((entry.pitySinceLast6 / PITY.charSoft) * 100)) : 0,
         pityBarColorLevel,
         freeTotal: freeRecords.length,
         freeBarPercent: freeRecords.length > 0 ? Math.min(100, Math.round((freeRecords.length / 10) * 100)) : 0,
         counts: entry.counts,
         winRate: entry.winRate,
-        sparkCount: entry.sparkCount
+        sparkCount: entry.sparkCount,
+        ...(specialMilestones ? { specialMilestones } : {})
       })
     }
 
-    // UP 池垫抽数继承：上一 UP 池的垫抽合并到当前 UP 池显示
-    const upEntryIndices = []
-    for (let i = 0; i < charPoolEntries.length; i++) {
-      if (poolUpMap[charPoolEntries[i].poolName]) upEntryIndices.push(i)
+    // 限定角色池继承（对齐 EndfieldGachaHelper / endfield-gacha）：
+    // 小保底(80) 与 大保底(120) 跨所有期数共享；免费十连不计入；按全局时间序合并后单次遍历
+    const isLimitedPoolName = (poolName) => {
+      const recs = charByPoolName[poolName] || []
+      // 任意一条记录的 pool_id 含 limited 即视为限定池（避免第一条记录 pool_id 缺失的误判）
+      const hasLimitedId = recs.some((r) => (r?.pool_id || '').toLowerCase().includes('limited'))
+      return hasLimitedId || !!poolUpMap[poolName]
     }
-    if (upEntryIndices.length >= 2) {
-      // 按记录时间排序（max seq_id 最大的为最新池子）
-      const getMaxSeqId = (poolName) => {
-        const records = charByPoolName[poolName] || []
-        let maxSeq = ''
-        for (const r of records) {
-          const s = String(r.seq_id || '')
-          if (s > maxSeq) maxSeq = s
-        }
-        return maxSeq
+    const limitedPoolNames = charPoolNames.filter((pn) => isLimitedPoolName(pn))
+    if (limitedPoolNames.length > 0) {
+      // 1) 合并所有限定池的付费记录，并打上池名（参考 EndfieldGachaHelper 的 special 合并口径）
+      const allLimitedPaid = []
+      for (const pn of limitedPoolNames) {
+        const list = (charByPoolName[pn] || []).filter((r) => r.is_free !== true)
+        for (const r of list) allLimitedPaid.push({ ...r, _poolName: pn })
       }
-      upEntryIndices.sort((a, b) => {
-        const seqA = getMaxSeqId(charPoolEntries[a].poolName)
-        const seqB = getMaxSeqId(charPoolEntries[b].poolName)
-        return seqA.localeCompare(seqB, undefined, { numeric: true })
+      // 2) 排序：与 poolUtils.sortRecordsByTimeAndSeq 一致——时间升序，再 seq_id 升序（参考 endfield-gacha 的 chronological 遍历）
+      const getTsMs = (r) => {
+        const v = r.gacha_ts ?? r.gachaTs
+        if (v == null || v === '') return 0
+        const n = Number(v)
+        if (!Number.isFinite(n)) return 0
+        return n < 10000000000 ? n * 1000 : n
+      }
+      const parseSeqId = (r) => {
+        const n = Number(r.seq_id)
+        return Number.isFinite(n) ? n : NaN
+      }
+      allLimitedPaid.sort((a, b) => {
+        const ta = getTsMs(a)
+        const tb = getTsMs(b)
+        if (ta !== tb) return ta - tb
+        const sa = parseSeqId(a)
+        const sb = parseSeqId(b)
+        if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb
+        return String(a.seq_id || '').localeCompare(String(b.seq_id || ''), undefined, { numeric: true })
       })
-      const newestIdx = upEntryIndices[upEntryIndices.length - 1]
-      const previousIdx = upEntryIndices[upEntryIndices.length - 2]
-      const newestEntry = charPoolEntries[newestIdx]
-      const previousEntry = charPoolEntries[previousIdx]
-      const previousPity = previousEntry.pitySinceLast6 || 0
-      // 上一 UP 池的垫抽不再单独显示（已继承或已消耗）
-      previousEntry.pitySinceLast6 = null
-      previousEntry.pityBarPercent = 0
-      // 当前 UP 池未出过六星时，继承上一 UP 池的垫抽（蓝色显示）
-      if (newestEntry.star6 === 0 && previousPity > 0) {
-        const ownPity = newestEntry.pitySinceLast6 || 0
-        newestEntry.inheritedPity = previousPity
-        newestEntry.pitySinceLast6 = previousPity + ownPity
-        newestEntry.pityBarPercent = Math.min(100, Math.round((newestEntry.pitySinceLast6 / PITY.charSoft) * 100))
-        newestEntry.inheritedPityPercent = newestEntry.pitySinceLast6 > 0 ? Math.round((previousPity / newestEntry.pitySinceLast6) * 100) : 0
-        const pityPct = (newestEntry.pitySinceLast6 / PITY.charSoft) * 100
-        newestEntry.pityBarColorLevel = pityPct < 50 ? 'green' : pityPct < 80 ? 'yellow' : 'red'
+      // 3) 单次遍历计算共享保底：sharedPityTo6Star 与 sharedPityToUp6Star 均只在出 UP 6 星时清零，
+      //    非 UP 6 星（歪或历史池无 UP 映射）不清零，确保跨池累计垫抽数正确
+      let sharedPityTo6Star = 0
+      let sharedPityToUp6Star = 0
+      let lastLimitedSixStarWasUp = undefined
+      const activeCharPoolName = biliUp?.activeCharPoolName || ''
+      const fallbackUpNames = (biliUp?.upCharNames?.length ? biliUp.upCharNames : (biliUp?.upCharName ? [biliUp.upCharName] : []))
+      // 限定池跨期共享垫抽：seq_id -> 跨池垫抽数（仅计付费抽，按特许寻访全局时间线计算）
+      const seqIdToSharedPity = {}
+      for (const r of allLimitedPaid) {
+        sharedPityTo6Star += 1
+        sharedPityToUp6Star += 1
+        if (r.rarity === 6) {
+          const name = String(r.char_name || r.item_name || '').trim()
+          const poolUpName = poolUpMap[r._poolName]
+          const upNames = poolUpName ? [poolUpName] : (activeCharPoolName && (r._poolName === activeCharPoolName || r._poolName.includes(activeCharPoolName) || activeCharPoolName.includes(r._poolName)) ? fallbackUpNames : [])
+          const isUp = upNames.length > 0 && upNames.some((u) => (u && (name === u || name.includes(u) || u.includes(name))))
+          // 记录该次 6 星的跨池垫抽数（仅计付费抽）
+          const seqKey = String(r.seq_id ?? '').trim()
+          if (seqKey) {
+            seqIdToSharedPity[seqKey] = sharedPityTo6Star
+          }
+          lastLimitedSixStarWasUp = isUp
+          if (isUp) {
+            sharedPityTo6Star = 0
+            sharedPityToUp6Star = 0
+          }
+        }
+      }
+      // 4) 当前限定池 = 合并时间线中最后一条记录所在池（与 endfield-gacha 的 isCurrentPool 一致）
+      const currentLimitedPoolName = allLimitedPaid.length > 0 ? allLimitedPaid[allLimitedPaid.length - 1]._poolName : limitedPoolNames[0]
+      // 5) 所有限定池清空单池垫抽显示，仅当前限定池展示共享保底
+      for (let i = 0; i < charPoolEntries.length; i++) {
+        const e = charPoolEntries[i]
+        if (!isLimitedPoolName(e.poolName)) continue
+        e.pitySinceLast6 = null
+        e.pityBarPercent = 0
+      }
+      const currentEntry = charPoolEntries.find((e) => e.poolName === currentLimitedPoolName)
+        if (currentEntry) {
+          // 覆盖当前限定池图片中 UP 角色的抽数与进度条为跨池累计垫抽数（例如 59 抽出 UP）
+          if (Array.isArray(currentEntry.images) && Object.keys(seqIdToSharedPity).length > 0) {
+            // 查找当前池中最近一次 6 星记录对应的 seq_id，并使用其跨池垫抽数
+            const paidRecords = (charByPoolName[currentLimitedPoolName] || []).filter((r) => r.is_free !== true)
+            const lastSix = [...paidRecords].reverse().find((r) => r.rarity === 6 && seqIdToSharedPity[String(r.seq_id ?? '').trim()] != null)
+            if (lastSix) {
+              const key = String(lastSix.seq_id ?? '').trim()
+              const crossPoolPity = seqIdToSharedPity[key]
+              if (typeof crossPoolPity === 'number') {
+                // 使用跨池垫抽数重算进度条宽度与颜色（限定池沿用角色池 80 抽刻度，保证与历史池视觉一致）
+                const maxPity = PITY.charSoft
+                const barPercent = Math.min(100, Math.round((crossPoolPity / maxPity) * 100))
+                const colorScale = PITY.charProbBoost
+                const colorPercent = Math.min(100, (crossPoolPity / colorScale) * 100)
+                const barColorLevel = colorPercent < 50 ? 'green' : colorPercent < 80 ? 'yellow' : 'red'
+                for (let i = currentEntry.images.length - 1; i >= 0; i--) {
+                  const img = currentEntry.images[i]
+                  if (img && (img.tag === 'UP' || img.badgeColor === 'up')) {
+                    img.pullCount = crossPoolPity
+                    img.barPercent = barPercent
+                    img.barColorLevel = barColorLevel
+                    break
+                  }
+                }
+              }
+            }
+          }
+        currentEntry.pitySinceLast6 = sharedPityTo6Star
+        currentEntry.pityToUp6Star = sharedPityToUp6Star
+        currentEntry.pityBarPercent = Math.min(100, Math.round((sharedPityTo6Star / PITY.charSoft) * 100))
+        const pityPct = (sharedPityTo6Star / PITY.charSoft) * 100
+        currentEntry.pityBarColorLevel = pityPct < 50 ? 'green' : pityPct < 80 ? 'yellow' : 'red'
+        currentEntry.isInProbBoostZone = sharedPityTo6Star >= PITY.charProbBoost
+        currentEntry.isHardPity = sharedPityTo6Star >= PITY.charSoft
+        if (currentEntry.specialMilestones) {
+          currentEntry.specialMilestones.pityToUp6Star = sharedPityToUp6Star
+          currentEntry.specialMilestones.lastSixStarWasUp = lastLimitedSixStarWasUp
+          currentEntry.specialMilestones.pullsToUp120 = (lastLimitedSixStarWasUp === true)
+            ? 0
+            : Math.max(0, PITY.specialMilestone120 - sharedPityToUp6Star)
+        }
       }
     }
-    // 角色池倒序：最新 UP 池在最上面
-    charPoolEntries.reverse()
+    // 角色池展示顺序：UP 池按 /api/bili-wiki/activities 的 start_time 升序（熔火灼痕 → 轻飘飘的信使 → 热烈色彩），非限定池随后
+    const charPoolOrderByTime = biliUp?.charPoolOrderByTime || []
+    const limitedOrderMap = {}
+    charPoolOrderByTime.forEach((name, i) => { limitedOrderMap[name] = i })
+    charPoolEntries.sort((a, b) => {
+      const aLimited = isLimitedPoolName(a.poolName)
+      const bLimited = isLimitedPoolName(b.poolName)
+      if (aLimited && !bLimited) return -1
+      if (!aLimited && bLimited) return 1
+      if (aLimited && bLimited) {
+        const ai = limitedOrderMap[a.poolName] ?? 9999
+        const bi = limitedOrderMap[b.poolName] ?? 9999
+        return ai - bi
+      }
+      return (a.poolName || '').localeCompare(b.poolName || '')
+    })
+    // 拆分为限定特许寻访 / 常驻寻访；常驻内 基础寻访 在上、启程寻访 在下
+    const charPoolEntriesLimited = charPoolEntries.filter((e) => isLimitedPoolName(e.poolName))
+    const charPoolEntriesNormal = charPoolEntries.filter((e) => !isLimitedPoolName(e.poolName))
+    const normalOrder = ['基础寻访', '启程寻访']
+    charPoolEntriesNormal.sort((a, b) => {
+      const ai = normalOrder.indexOf(a.poolName)
+      const bi = normalOrder.indexOf(b.poolName)
+      if (ai !== -1 && bi !== -1) return ai - bi
+      if (ai !== -1) return -1
+      if (bi !== -1) return 1
+      return (a.poolName || '').localeCompare(b.poolName || '')
+    })
 
     // 武器池：按 pool_name 分开展示（星声申领、熔铸申领等）
     let weaponRecords = []
@@ -695,7 +899,24 @@ export class EndfieldGacha extends plugin {
       weaponByPoolName[name].push(r)
     }
     const weaponPoolEntries = []
-    const weaponPoolNames = Object.keys(weaponByPoolName).sort()
+    // 武器池排序：非星声申领按时间倒序（最新在上），星声申领固定在最后
+    const weaponPoolNames = Object.keys(weaponByPoolName).sort((a, b) => {
+      const isStarlightA = a.includes('星声申领')
+      const isStarlightB = b.includes('星声申领')
+      // 星声申领排到最后
+      if (isStarlightA && !isStarlightB) return 1
+      if (!isStarlightA && isStarlightB) return -1
+      // 其他池子按最大 seq_id 降序（最新在上）
+      const getMax = (pn) => {
+        let max = -Infinity
+        for (const r of (weaponByPoolName[pn] || [])) {
+          const n = Number(r.seq_id)
+          if (Number.isFinite(n) && n > max) max = n
+        }
+        return max
+      }
+      return getMax(b) - getMax(a)
+    })
     for (const subPoolName of weaponPoolNames) {
       const groupRecords = weaponByPoolName[subPoolName]
       const showNotWaiRate = !!matchActivePool(subPoolName, biliUp?.activeWeaponPoolName)
@@ -715,32 +936,72 @@ export class EndfieldGacha extends plugin {
       const wFreeRecords = weaponFreeByPoolName[subPoolName] || []
       const wFreeStarImgs = buildFreeStarImages(wFreeRecords, false)
       const wMergedImages = [...entry.images, ...wFreeStarImgs]
+      // 武器池按"申领次数"（十连）计数
+      // 累计奖励节奏：第10次给武库箱，第18次给UP武器，之后每16次循环
+      const weaponSessions = Math.floor(groupRecords.length / 10)
+      // 武器池每红花费：按十连数计算，而非单抽数
+      const weaponAvgCost = entry.star6 > 0 ? Math.round(weaponSessions / entry.star6) + '抽' : '-'
+      // 计算当前垫抽数（单抽数）
+      const pullsSinceLast6 = (() => {
+        const sorted6 = [...groupRecords].sort((a, b) => Number(b.seq_id) - Number(a.seq_id))
+        let count = 0
+        for (const r of sorted6) {
+          if (r.rarity === 6) break
+          count++
+        }
+        return count
+      })()
+      const sessionsSinceLast6 = Math.floor(pullsSinceLast6 / 10)
+      const sessionsToHardPity = Math.max(0, PITY.weaponSessionHard - sessionsSinceLast6)
+      const hasUp6 = entry.counts[6] > 0
+      const sessionsToUp6 = hasUp6 ? 0 : Math.max(0, PITY.weaponUpHard - weaponSessions)
+      // 下一个累计奖励节点
+      const nextBox = weaponSessions < 10 ? 10 : 10 + Math.ceil((weaponSessions + 1 - 10) / 16) * 16
+      const nextUp = weaponSessions < 18 ? 18 : 18 + Math.ceil((weaponSessions + 1 - 18) / 16) * 16
+      const nextRewardAt = Math.min(nextBox, nextUp)
+      const nextRewardType = nextRewardAt === nextBox ? '武库箱' : 'UP武器'
+      const weaponStatus = {
+        totalSessions: weaponSessions,
+        sessionsSinceLast6,
+        sessionsToHardPity,
+        hasUp6,
+        sessionsToUp6,
+        nextRewardAt,
+        nextRewardType,
+        remainingSessions: Math.max(0, nextRewardAt - weaponSessions)
+      }
+      // 武器池垫抽进度条：按单抽数显示，进度条按40抽为满计算（4次十连保底）
+      const weaponPityBarPercent = pullsSinceLast6 > 0 ? Math.min(100, Math.round((pullsSinceLast6 / 40) * 100)) : 0
+      const weaponPityBarColorLevel = pullsSinceLast6 < 20 ? 'green' : pullsSinceLast6 < 30 ? 'yellow' : 'red'
       weaponPoolEntries.push({
         poolName: entry.poolName,
-        total: entry.total,
+        total: groupRecords.length,
+        totalPulls: groupRecords.length,
         star6: entry.star6,
-        metric1: entry.avgAllCost,
+        metric1: weaponAvgCost,
         metric1Label: '每红花费',
         metric2: entry.metric2,
         metric2Label,
         images: wMergedImages,
-        pitySinceLast6: null, // 武器池无垫抽概念，不显示已垫
-        pityBarPercent: 0,
-        pityBarColorLevel: 'green',
+        pitySinceLast6: pullsSinceLast6 > 0 ? pullsSinceLast6 : null,
+        pityBarPercent: weaponPityBarPercent,
+        pityBarColorLevel: weaponPityBarColorLevel,
         freeTotal: wFreeRecords.length,
         freeBarPercent: wFreeRecords.length > 0 ? Math.min(100, Math.round((wFreeRecords.length / 10) * 100)) : 0,
         counts: entry.counts,
         winRate: entry.winRate,
-        sparkCount: entry.sparkCount
+        sparkCount: entry.sparkCount,
+        weaponStatus
       })
     }
-    // 武器池倒序：熔铸、星声等
-    weaponPoolEntries.reverse()
 
+    // 限定特许寻访倒序展示：最新（热烈色彩）在最上面，最老（熔火灼痕）在最下面
     const poolGroups = [
-      { label: '角色池', pools: charPoolEntries },
-      { label: '武器池', pools: weaponPoolEntries }
+      { label: '特许寻访', pools: charPoolEntriesLimited.slice().reverse() },
+      { label: '武器池', pools: weaponPoolEntries },
+      { label: '常驻寻访', pools: charPoolEntriesNormal }
     ]
+
 
     // 顶部显示时间（替代「按池统计」）
     const now = new Date()
@@ -753,7 +1014,6 @@ export class EndfieldGacha extends plugin {
 
     if (this.e?.runtime?.render) {
       try {
-        // 统计概览数据
         const overallStats = statsData.stats || {}
         const limited = getPool('limited_char', 'limited')
         const standard = getPool('standard_char', 'standard')
