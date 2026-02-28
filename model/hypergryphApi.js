@@ -352,6 +352,7 @@ let hypergryphAPI = {
           client_id: params.client_id || 'qqbot',
           client_name: params.client_name || '终末地机器人',
           client_type: params.client_type || 'bot',
+          platform_id: params.platform_id || '',
           scopes: params.scopes || ['user_info', 'binding_info', 'game_data', 'attendance']
         })
       })

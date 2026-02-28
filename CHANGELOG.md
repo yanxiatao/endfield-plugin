@@ -5,6 +5,14 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循扩展的语义化版本规范（x.y.z 格式）。
 
+## [2.0.2] - 2026-03-01
+
+### Fixed
+- **授权绑定参数修正**
+  - `client_id` 改为机器人自身 QQ 号（`self_id`），不再使用绑定者 QQ
+  - 新增 `platform_id` 字段，传入绑定者 QQ 号，符合 API 文档规范
+  - 授权轮询检查同步修正：使用机器人 ID 作为 `clientId`，用户 QQ 作为 `userIdentifier`
+
 ## [2.0.1] - 2026-02-27
 
 ### Changed

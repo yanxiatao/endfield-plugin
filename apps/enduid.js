@@ -134,7 +134,8 @@ async function checkUserAuthBindings(userId) {
   const authAccounts = accounts.filter(acc => acc.login_type === 'auth' || acc.login_type === 'cred')
   if (authAccounts.length === 0) return
 
-  const status = await hypergryphAPI.getAuthorizationClientStatus(userId)
+  const botSelfId = String(Bot?.uin || '')
+  const status = await hypergryphAPI.getAuthorizationClientStatus(botSelfId, userId)
   // 网络/服务错误返回 null，不判定为撤销，跳过本次
   if (status === null) return
 
@@ -279,8 +280,8 @@ export class EndfieldUid extends plugin {
     }
 
     try {
-      // 授权绑定使用绑定者 ID 作为 client_id（与后端「检查客户端授权状态」按绑定者区分）
-      const clientId = String(this.e?.user_id || '')
+      // 授权绑定使用机器人自身 ID 作为 client_id，绑定者 QQ 作为 platform_id
+      const clientId = String(this.e?.self_id || Bot?.uin || '')
       const clientName = config.auth_client_name || '终末地机器人'
       const clientType = config.auth_client_type || 'bot'
       const scopes = Array.isArray(config.auth_scopes) && config.auth_scopes.length > 0
@@ -291,6 +292,7 @@ export class EndfieldUid extends plugin {
         client_id: clientId,
         client_name: clientName,
         client_type: clientType,
+        platform_id: String(this.e?.user_id || ''),
         scopes
       })
 
