@@ -130,20 +130,20 @@ async function checkUserAuthBindings(userId) {
     logger.mark(`[终末地插件][授权轮询]用户 ${userId} 已清理 ${accounts.length - cleaned.length} 条无效本地记录`)
   }
 
-  // 2. 检查网页授权类型的远程状态
+  // 2. 检查网页授权类型的远程状态（按用户精确查询）
   const authAccounts = accounts.filter(acc => acc.login_type === 'auth' || acc.login_type === 'cred')
   if (authAccounts.length === 0) return
 
   const botSelfId = String(Bot?.uin || '')
-  const status = await hypergryphAPI.getAuthorizationClientStatus(botSelfId, userId)
-  // 网络/服务错误返回 null，不判定为撤销，跳过本次
-  if (status === null) return
+  const authorizations = await hypergryphAPI.getClientPlatformAuthorizations(botSelfId, userId)
+  // null = 网络/权限错误，跳过本次（不做任何操作）
+  if (authorizations === null) return
 
-  if (status.is_active === false) {
-    // 授权已撤销：从本地移除该用户下所有网页授权类型账号
+  if (authorizations.length === 0) {
+    // 该用户确实没有活跃授权：从本地移除所有网页授权类型账号
     const updatedAccounts = accounts.filter(acc => acc.login_type !== 'auth' && acc.login_type !== 'cred')
     await saveUserBindings(userId, updatedAccounts)
-    logger.mark(`[终末地插件][授权轮询]用户 ${userId} 授权已撤销(is_active=false)，已移除本地网页授权绑定`)
+    logger.mark(`[终末地插件][授权轮询]用户 ${userId} 无活跃授权，已移除本地网页授权绑定`)
     try {
       const nickname = authAccounts[0]?.nickname || '未知'
       const notifyMsg = getMessage('enduid.auth_auto_revoked', { nickname })

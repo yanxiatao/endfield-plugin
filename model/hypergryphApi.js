@@ -437,7 +437,9 @@ let hypergryphAPI = {
 
       if (!response.ok) {
         if (response.status === 404) {
-          return { is_active: false, message: '未找到该客户端的授权记录' }
+          // 404 可能是 API Key 不匹配等原因，不应直接判定为撤销
+          logger.warn(`[终末地插件][授权状态]客户端 ${clientId} 返回 404，跳过本次检查`)
+          return null
         }
         logger.error(`[终末地插件][授权状态]${response.status} ${response.statusText}`)
         return null
@@ -452,6 +454,56 @@ let hypergryphAPI = {
       return res.data || null
     } catch (error) {
       logger.error(`[终末地插件][授权状态]${error.toString()}`)
+      return null
+    }
+  },
+
+  /**
+   * 按平台用户查询客户端授权（用于轮询检查单个用户的授权状态）
+   * GET /api/v1/authorization/clients/:client_id/users/:platform_id
+   * @param {string} clientId 客户端标识（如 bot 的 self_id）
+   * @param {string} platformId 平台用户标识（如绑定者 QQ 号）
+   * @returns {Array | null} 授权列表（空数组=无活跃授权，null=错误/跳过）
+   */
+  async getClientPlatformAuthorizations(clientId, platformId) {
+    const config = getUnifiedBackendConfig()
+    if (!config.apiKey) return null
+
+    try {
+      const response = await fetch(
+        `${config.baseUrl}/api/v1/authorization/clients/${encodeURIComponent(clientId)}/users/${encodeURIComponent(platformId)}`,
+        {
+          timeout: 15000,
+          method: 'get',
+          headers: { 'X-API-Key': config.apiKey }
+        }
+      )
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          // 区分 "未找到授权记录"（确认无授权）和 "无权查询"（API Key 问题）
+          try {
+            const errRes = await response.json()
+            if (errRes?.message && errRes.message.includes('无权')) {
+              logger.warn(`[终末地插件][平台授权]API Key 无权查询客户端 ${clientId} 用户 ${platformId}`)
+              return null
+            }
+          } catch (_) { /* 解析失败，按未找到处理 */ }
+          return []
+        }
+        logger.error(`[终末地插件][平台授权]${response.status} ${response.statusText}`)
+        return null
+      }
+
+      const res = await response.json()
+      if (res?.code !== 0) {
+        logger.error(`[终末地插件][平台授权]${JSON.stringify(res)}`)
+        return null
+      }
+
+      return res.data?.authorizations || []
+    } catch (error) {
+      logger.error(`[终末地插件][平台授权]${error.toString()}`)
       return null
     }
   },
