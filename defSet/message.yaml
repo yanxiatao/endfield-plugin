@@ -130,7 +130,7 @@ gacha:
   no_records: "暂无抽卡记录，请发送「:抽卡分析同步」进行同步。"
   records_sync_hint: "同步最新记录请发送「:抽卡分析同步」。"
   analysis_need_sync: "暂无本地数据，请先执行「:抽卡分析同步」。"
-  analysis_sync_start: "正在同步抽卡记录并生成分析，请稍候..."
+  analysis_sync_start: "检测到未同步记录，正在为您自动同步并生成分析，请稍候..."
   analysis_auto_sync_hint: "检测到未同步记录，正在为您自动同步，请稍候..."
   analysis_incremental_hint: "正在拉取新增记录..."
   select_account_query: "请选择要操作的账号"
@@ -141,6 +141,7 @@ gacha:
   sync_start: "开始同步抽卡记录..."
   sync_busy: "同步任务正在运行中，请稍后再试。"
   sync_start_failed: "同步任务启动失败。"
+  sync_master_only: "此操作仅限主人使用。"
   sync_done: |
     [ 抽卡同步完成 ]
     ──────────────
@@ -296,3 +297,24 @@ update:
   done: "插件更新完成\n{commit}"
   already_latest: "当前已是最新版本。"
   failed: "更新失败 {error}"
+
+# Redis 清理
+redis_clean:
+  redis_unavailable: "Redis 不可用"
+  scan_failed: "扫描 Redis 失败：{error}"
+  no_keys: "ENDFIELD 命名空间下没有任何 key。"
+
+# 模拟抽卡
+gacha_simulate:
+  reset_ok: "已重置模拟抽卡状态（全部卡池），下次将从头开始。"
+
+# MaaEnd 设备管理
+maaend_device:
+  current_default: "当前默认设备：{index}. {name} [{status}]\n更换：:maa 设置设备 <新序号>"
+  set_default_ok: |
+    已设置默认设备：{index}. {name} [{status}]
+    
+    后续命令可省略设备序号，例如：
+      :maa 截图 → 截取默认设备
+      :maa 任务列表 → 查看默认设备任务
+      :maa 执行 daily → 在默认设备执行任务

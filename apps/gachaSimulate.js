@@ -427,7 +427,7 @@ export class EndfieldGachaSimulate extends plugin {
         logger.error(`[终末地插件][模拟抽卡] 重置 state 失败: ${err?.message || err}`)
       }
     }
-    await this.reply('已重置模拟抽卡状态（全部卡池），下次将从头开始。')
+    await this.reply(getMessage('gacha_simulate.reset_ok'))
     return true
   }
 

@@ -152,7 +152,11 @@ export class maaend extends plugin {
       const pos = devices.findIndex(d => d.device_id === defaultId)
       if (pos >= 0) {
         const d = devices[pos]
-        await this.reply(`当前默认设备：${pos + 1}. ${d.device_name || d.device_id} [${statusText(d.status)}]\n更换：:maa 设置设备 <新序号>`)
+        await this.reply(getMessage('maaend_device.current_default', { 
+          index: pos + 1, 
+          name: d.device_name || d.device_id, 
+          status: statusText(d.status) 
+        }))
       } else {
         await redis.del(REDIS_KEYS.defaultDevice(userId))
         await this.reply(getMessage('maaend.default_device_invalid'))
@@ -165,14 +169,11 @@ export class maaend extends plugin {
     if (!out.device) return true
 
     await redis.set(REDIS_KEYS.defaultDevice(userId), out.device.device_id)
-    await this.reply([
-      `已设置默认设备：${idx}. ${out.device.device_name || out.device.device_id} [${statusText(out.device.status)}]`,
-      '',
-      '后续命令可省略设备序号，例如：',
-      '  :maa 截图 → 截取默认设备',
-      '  :maa 任务列表 → 查看默认设备任务',
-      '  :maa 执行 daily → 在默认设备执行任务'
-    ].join('\n'))
+    await this.reply(getMessage('maaend_device.set_default_ok', {
+      index: idx,
+      name: out.device.device_name || out.device.device_id,
+      status: statusText(out.device.status)
+    }))
     return true
   }
 

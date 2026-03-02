@@ -150,9 +150,10 @@ export class EndfieldGacha extends plugin {
 
     // 如果需要同步或没有数据，则执行同步
     if (wantsSync || !hasRecord) {
-      await this.reply(getMessage('gacha.sync_start'))
       return await this.syncGacha({
         afterSyncShowRecords: true,
+        fromSync: true,
+        isFirstSync: !hasRecord,
         selectPrompt: getMessage('gacha.select_account_sync')
       })
     }
@@ -337,10 +338,10 @@ export class EndfieldGacha extends plugin {
     
     // 如果没有数据，自动执行同步
     if (!statsData || !hasRecord) {
-      await this.reply(getMessage('gacha.analysis_sync_start'))
       return await this.syncGacha({
         afterSyncSendAnalysis: true,
         fromAnalysis: true,
+        isFirstSync: true,
         selectPrompt: getMessage('gacha.select_account_sync')
       })
     }
@@ -558,7 +559,6 @@ export class EndfieldGacha extends plugin {
             if (cover) images.push({ name, url: cover, pullCount, tag, badgeColor, barPercent, barColorLevel, refLinePercent: null })
           }
           pullsSinceLast6 = 0
-          if (images.length >= 6) break
         }
       }
       const paidSorted = sorted.filter(r => r.is_free !== true)
@@ -1474,7 +1474,9 @@ export class EndfieldGacha extends plugin {
         target_user_id: String(targetUserId),
         timestamp: Date.now(),
         afterSyncSendAnalysis: options?.afterSyncSendAnalysis,
-        fromAnalysis: options?.fromAnalysis
+        fromAnalysis: options?.fromAnalysis,
+        fromSync: options?.fromSync,
+        isFirstSync: options?.isFirstSync
       }), { EX: 300 })
       return true
     }
@@ -1482,9 +1484,21 @@ export class EndfieldGacha extends plugin {
     const selectedUid = accounts[0]?.uid || null
     const roleId = sklUser.endfield_uid ? String(sklUser.endfield_uid) : null
     const qqName = this.e.sender?.nickname || this.e.sender?.card || String(this.e.user_id)
+    
+    // 只有一个账号时，在开始同步前发送提示
+    if (options?.fromSync || options?.fromAnalysis) {
+      const isFirstSync = options?.isFirstSync ?? false
+      if (options?.fromAnalysis) {
+        await this.reply(getMessage('gacha.analysis_sync_start'))
+      } else {
+        await this.reply(getMessage(isFirstSync ? 'gacha.auth_full_sync' : 'gacha.sync_start'))
+      }
+    }
+    
     await this.startFetchAndPoll(token, selectedUid, roleId, targetUserId, qqName, {
       afterSyncSendAnalysis: options?.afterSyncSendAnalysis,
-      fromAnalysis: options?.fromAnalysis
+      fromAnalysis: options?.fromAnalysis,
+      fromSync: options?.fromSync
     })
     return true
   }
@@ -1551,9 +1565,21 @@ export class EndfieldGacha extends plugin {
     const sklUser = new EndfieldUser(targetUserId)
     const roleId = (await sklUser.getUser()) && sklUser.endfield_uid ? String(sklUser.endfield_uid) : null
     const qqName = this.e.sender?.nickname || this.e.sender?.card || String(this.e.user_id)
+    
+    // 用户选择账号后，发送开始同步提示
+    if (data.fromSync || data.fromAnalysis) {
+      const isFirstSync = data.isFirstSync ?? false
+      if (data.fromAnalysis) {
+        await this.reply(getMessage('gacha.analysis_sync_start'))
+      } else {
+        await this.reply(getMessage(isFirstSync ? 'gacha.auth_full_sync' : 'gacha.sync_start'))
+      }
+    }
+    
     await this.startFetchAndPoll(data.token, selectedUid, roleId, targetUserId, qqName, {
       afterSyncSendAnalysis: data.afterSyncSendAnalysis,
-      fromAnalysis: data.fromAnalysis
+      fromAnalysis: data.fromAnalysis,
+      fromSync: data.fromSync
     })
     return true
   }
@@ -1571,6 +1597,7 @@ export class EndfieldGacha extends plugin {
   async startFetchAndPoll(token, accountUid, roleId, userId, qqName, options = {}) {
     const afterSyncSendAnalysis = options?.afterSyncSendAnalysis ?? false
     const fromAnalysis = options?.fromAnalysis ?? false
+    const fromSync = options?.fromSync ?? false
     // 先判断是否首次同步，只发一条开始提示（首次→首次同步，否则→开始同步）
     const statsData = await hypergryphAPI.getGachaStats(token)
     const hasSyncRecord = statsData?.has_records === true ||
@@ -1591,8 +1618,8 @@ export class EndfieldGacha extends plugin {
       return
     }
 
-    // 由抽卡分析触发的同步已发过「未同步/正在拉取」提示，此处不再重复发开始提示
-    if (!fromAnalysis) {
+    // 由抽卡分析或同步抽卡记录触发的同步已发过提示，此处不再重复发开始提示
+    if (!fromAnalysis && !fromSync) {
       await this.reply(getMessage(isFirstSync ? 'gacha.auth_full_sync' : 'gacha.sync_start'))
     }
 

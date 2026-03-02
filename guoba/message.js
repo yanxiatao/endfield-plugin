@@ -484,6 +484,11 @@ export default function getMessageSchemas() {
       component: 'Input',
     },
     {
+      field: 'gacha.sync_master_only',
+      label: '抽卡 - 仅限主人操作',
+      component: 'Input',
+    },
+    {
       field: 'gacha.sync_done',
       label: '抽卡 - 同步完成',
       component: 'InputTextArea',
@@ -930,6 +935,150 @@ export default function getMessageSchemas() {
     {
       field: 'update.failed',
       label: '更新 - 失败',
+      component: 'Input',
+    },
+    {
+      component: 'Divider',
+      label: 'Redis 清理',
+    },
+    {
+      field: 'redis_clean.redis_unavailable',
+      label: 'Redis - 不可用',
+      component: 'Input',
+    },
+    {
+      field: 'redis_clean.scan_failed',
+      label: 'Redis - 扫描失败',
+      component: 'Input',
+    },
+    {
+      field: 'redis_clean.no_keys',
+      label: 'Redis - 无键值',
+      component: 'Input',
+    },
+    {
+      component: 'Divider',
+      label: '模拟抽卡',
+    },
+    {
+      field: 'gacha_simulate.reset_ok',
+      label: '模拟抽卡 - 重置成功',
+      component: 'Input',
+    },
+    {
+      component: 'Divider',
+      label: 'MaaEnd 设备管理',
+    },
+    {
+      field: 'maaend_device.current_default',
+      label: 'MaaEnd - 当前默认设备',
+      component: 'Input',
+    },
+    {
+      field: 'maaend_device.set_default_ok',
+      label: 'MaaEnd - 设置默认设备成功',
+      component: 'InputTextArea',
+      componentProps: {
+        rows: 4,
+      },
+    },
+    {
+      component: 'Divider',
+      label: 'MaaEnd 远程控制',
+    },
+    {
+      field: 'maaend.no_api_key',
+      label: 'MaaEnd - 未配置 API Key',
+      component: 'Input',
+    },
+    {
+      field: 'maaend.bind_private_only',
+      label: 'MaaEnd - 绑定仅限私聊',
+      component: 'Input',
+    },
+    {
+      field: 'maaend.bind_failed',
+      label: 'MaaEnd - 绑定失败',
+      component: 'Input',
+    },
+    {
+      field: 'maaend.bind_success',
+      label: 'MaaEnd - 绑定成功',
+      component: 'Input',
+    },
+    {
+      field: 'maaend.no_devices',
+      label: 'MaaEnd - 无设备',
+      component: 'Input',
+    },
+    {
+      field: 'maaend.no_devices_full',
+      label: 'MaaEnd - 无设备（完整提示）',
+      component: 'Input',
+    },
+    {
+      field: 'maaend.no_default_device',
+      label: 'MaaEnd - 未设置默认设备',
+      component: 'Input',
+    },
+    {
+      field: 'maaend.default_device_invalid',
+      label: 'MaaEnd - 默认设备失效',
+      component: 'Input',
+    },
+    {
+      field: 'maaend.no_device_index',
+      label: 'MaaEnd - 未指定设备序号',
+      component: 'Input',
+    },
+    {
+      field: 'maaend.device_index_out',
+      label: 'MaaEnd - 设备序号超出范围',
+      component: 'Input',
+    },
+    {
+      field: 'maaend.task_index_out',
+      label: 'MaaEnd - 任务序号超出范围',
+      component: 'Input',
+    },
+    {
+      field: 'maaend.task_run_failed',
+      label: 'MaaEnd - 任务执行失败',
+      component: 'Input',
+    },
+    {
+      field: 'maaend.device_offline',
+      label: 'MaaEnd - 设备离线',
+      component: 'Input',
+    },
+    {
+      field: 'maaend.device_busy',
+      label: 'MaaEnd - 设备忙碌',
+      component: 'Input',
+    },
+    {
+      field: 'maaend.job_not_found',
+      label: 'MaaEnd - 任务未找到',
+      component: 'Input',
+    },
+    {
+      field: 'maaend.job_query_failed',
+      label: 'MaaEnd - 查询任务失败',
+      component: 'Input',
+    },
+    {
+      field: 'maaend.screenshot_failed',
+      label: 'MaaEnd - 截图失败',
+      component: 'Input',
+    },
+    {
+      field: 'maaend.delete_usage',
+      label: 'MaaEnd - 删除设备用法',
+      component: 'Input',
+    },
+    {
+      field: 'maaend.no_job_history',
+      label: 'MaaEnd - 无任务历史',
       component: 'Input',
     },
   ]

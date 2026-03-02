@@ -1,3 +1,5 @@
+import { getMessage } from '../utils/common.js'
+
 /**
  * Redis 清理：移除 ENDFIELD 命名空间下的无用/过期 key
  * 命令：:redis清理（仅管理员）
@@ -66,7 +68,7 @@ export class EndfieldRedisClean extends plugin {
   async cleanRedis() {
     if (!this.e?.isMaster) return false
     if (!redis) {
-      await this.reply('Redis 不可用')
+      await this.reply(getMessage('redis_clean.redis_unavailable'))
       return true
     }
 
@@ -74,12 +76,12 @@ export class EndfieldRedisClean extends plugin {
     try {
       allKeys = await redis.keys('ENDFIELD:*')
     } catch (err) {
-      await this.reply(`扫描 Redis 失败：${err?.message || err}`)
+      await this.reply(getMessage('redis_clean.scan_failed', { error: err?.message || err }))
       return true
     }
 
     if (allKeys.length === 0) {
-      await this.reply('ENDFIELD 命名空间下没有任何 key。')
+      await this.reply(getMessage('redis_clean.no_keys'))
       return true
     }
 
