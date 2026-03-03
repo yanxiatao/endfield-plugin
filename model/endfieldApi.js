@@ -83,6 +83,33 @@ export default class EndfieldApi {
       cultivate_zone: {
         url: `${baseUrl}/api/endfield/domain`,
         query: data.roleId ? `roleId=${data.roleId}&serverId=${data.serverId || 1}` : ''
+      },
+      // 角色面板同步 API
+      panel_sync: {
+        url: `${baseUrl}/api/panel/sync`,
+        method: 'post'
+      },
+      panel_sync_status: {
+        url: `${baseUrl}/api/panel/sync/status`
+      },
+      panel_chars: {
+        url: `${baseUrl}/api/panel/chars`,
+        query: (() => {
+          const page = Math.max(1, Number(data.page ?? 1))
+          const pageSize = Math.min(50, Math.max(1, Number(data.page_size ?? 20)))
+          return `page=${page}&page_size=${pageSize}`
+        })()
+      },
+      panel_char_detail: {
+        url: `${baseUrl}/api/panel/char/${encodeURIComponent(data.template_id || data.templateId || '')}`
+      },
+      panel_chars_all: {
+        url: `${baseUrl}/api/panel/chars/all`,
+        query: (() => {
+          const page = Math.max(1, Number(data.page ?? 1))
+          const pageSize = Math.min(50, Math.max(1, Number(data.page_size ?? 20)))
+          return `page=${page}&page_size=${pageSize}`
+        })()
       }
     }
   }

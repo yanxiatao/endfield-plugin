@@ -42,7 +42,7 @@ export class EndfieldOperator extends plugin {
       priority: 50,
       rule: [
         {
-          reg: '^(?:[:：]|[/#](?:zmd|终末地))干员列表$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))更新面板$',
           fnc: 'getOperatorList'
         },
         {
@@ -547,6 +547,63 @@ export class EndfieldOperator extends plugin {
     if (!options.silent) await this.reply(getMessage('operator.loading_list'))
 
     try {
+      // 1) 触发面板同步（异步任务）
+      const syncRes = await sklUser.sklReq.getData('panel_sync')
+      if (!syncRes || syncRes.code !== 0) {
+        const msg = syncRes?.message || '触发同步失败'
+        await this.reply(getMessage('common.query_failed', { error: msg }))
+        return true
+      }
+
+      // 2) 轮询同步状态
+      const maxPoll = 90
+      let completed = false
+      let lastStatus = ''
+      for (let i = 0; i < maxPoll; i++) {
+        await this.sleep(2000)
+        const statusRes = await sklUser.sklReq.getData('panel_sync_status')
+        if (!statusRes || statusRes.code !== 0) continue
+        const status = String(statusRes?.data?.status || '').trim()
+        if (status && status !== lastStatus) {
+          lastStatus = status
+          logger.mark(`[终末地面板同步][${uid}] 状态: ${status}`)
+        }
+        if (status === 'completed' || status === 'idle') {
+          completed = true
+          break
+        }
+        if (status === 'failed') {
+          const errMsg = statusRes?.message || '同步失败'
+          await this.reply(getMessage('common.query_failed', { error: errMsg }))
+          return true
+        }
+      }
+      if (!completed) {
+        await this.reply(getMessage('operator.list_failed'))
+        return true
+      }
+
+      // 3) 拉取已同步角色列表（分页）
+      const pageSize = 50
+      let page = 1
+      let total = 0
+      const allSyncedChars = []
+      while (true) {
+        const listRes = await sklUser.sklReq.getData('panel_chars', { page, page_size: pageSize })
+        if (!listRes || listRes.code !== 0) {
+          const msg = listRes?.message || '获取同步角色列表失败'
+          await this.reply(getMessage('common.query_failed', { error: msg }))
+          return true
+        }
+        const data = listRes.data || {}
+        const rows = Array.isArray(data.synced_chars) ? data.synced_chars : []
+        total = Number(data.total ?? total ?? 0)
+        allSyncedChars.push(...rows)
+        if (allSyncedChars.length >= total || rows.length < pageSize) break
+        page++
+      }
+
+      // 4) 获取全量干员列表，使用同步角色覆盖展示数据
       const [res, friendDetailRes] = await Promise.all([
         sklUser.sklReq.getData('endfield_card_detail'),
         sklUser.sklReq.getData('friend_detail').catch(() => false)
@@ -561,6 +618,12 @@ export class EndfieldOperator extends plugin {
       const base = detail.base || {}
       const chars = detail.chars || []
 
+      if (!chars.length) {
+        await this.reply(getMessage('operator.not_found_info'))
+        return true
+      }
+
+      // 兼容历史 friend_detail 展示标记
       let friendTemplateCnSet = new Set()
       try {
         const friendPayload = friendDetailRes?.data || {}
@@ -573,18 +636,24 @@ export class EndfieldOperator extends plugin {
         friendTemplateCnSet = new Set()
       }
 
-      if (!chars.length) {
-        await this.reply(getMessage('operator.not_found_info'))
-        return true
-      }
+      // 同步角色索引：
+      const syncedMap = new Map()
+      const syncedOrderMap = new Map()
+      allSyncedChars.forEach((item, idx) => {
+        const tid = String(item?.template_id || '').trim()
+        if (!tid) return
+        if (!syncedOrderMap.has(tid)) syncedOrderMap.set(tid, idx)
+        syncedMap.set(tid, item)
+      })
 
       const operators = chars.map((char) => {
         const c = char.charData || char
         const imageUrl = c.avatarRtUrl || ''
         const templateId = String(c.templateId || c.template_id || c.id || '').trim()
+        const synced = syncedMap.get(templateId)
         const rarity = parseInt(c.rarity?.value || '1', 10) || 1
         const rarityClass = `rarity_${rarity}`
-        const level = char.level ?? c.level ?? 0
+        const level = synced?.level ?? char.level ?? c.level ?? 0
         const profession = c.profession?.value || ''
         const property = c.property?.value || ''
         const professionIcon = iconToDataUrl(META_CLASS_DIR, profession)
@@ -599,8 +668,9 @@ export class EndfieldOperator extends plugin {
           char_property_nature: 'NATURE'
         }
         const colorCode = (colorCodeMap[c.property?.key] || c.colorCode || 'PHY').toUpperCase()
-        const name = String(c.name ?? '').trim() || '未知'
-        const isFriendShowcase = friendTemplateCnSet.has(name)
+        const name = String(synced?.name_cn || synced?.name || c.name || '').trim() || '未知'
+        const isSynced = syncedOrderMap.has(templateId)
+        const isFriendShowcase = isSynced || friendTemplateCnSet.has(name)
         const evolvePhase = parseInt(char.evolvePhase ?? c.evolvePhase ?? '0', 10) || 0
         const potentialLevel = parseInt(char.potentialLevel ?? c.potentialLevel ?? '0', 10) || 0
         const phaseIcon = iconToDataUrl(META_PHASES_DIR, `phase-${evolvePhase}`)
@@ -620,14 +690,21 @@ export class EndfieldOperator extends plugin {
           isFriendShowcase,
           evolvePhase,
           potentialLevel,
-          phaseIcon
+          phaseIcon,
+          syncOrder: isSynced ? syncedOrderMap.get(templateId) : Number.MAX_SAFE_INTEGER
         }
       })
 
-      // 按星级从高到低排序展示（六星 → 五星 → 四星）
-      operators.sort((a, b) => (b.rarity - a.rarity))
+      // 同步角色在前（按同步列表顺序），其余按星级从高到低
+      operators.sort((a, b) => {
+        const aSynced = Number.isFinite(a.syncOrder) && a.syncOrder !== Number.MAX_SAFE_INTEGER
+        const bSynced = Number.isFinite(b.syncOrder) && b.syncOrder !== Number.MAX_SAFE_INTEGER
+        if (aSynced && bSynced) return a.syncOrder - b.syncOrder
+        if (aSynced && !bSynced) return -1
+        if (!aSynced && bSynced) return 1
+        return b.rarity - a.rarity
+      })
 
-      // 固定列宽、列数、间距，反算总宽；viewport 略大于内容宽避免裁切
       const LIST_COLUMN_COUNT = 6
       const LIST_CARD_WIDTH_PX = 300
       const LIST_GAP_PX = 12
@@ -675,10 +752,14 @@ export class EndfieldOperator extends plugin {
       }
       return true
     } catch (error) {
-      logger.error(`[终末地干员列表]查询失败: ${error}`)
+      logger.error(`[终末地面板同步]查询失败: ${error}`)
       await this.reply(getMessage('common.query_failed', { error: error.message }))
       return true
     }
+  }
+
+  sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms))
   }
 
   splitContent(content, maxLength = 2000) {

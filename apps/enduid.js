@@ -242,30 +242,6 @@ export class EndfieldUid extends plugin {
   }
 
   /**
-   * 将授权状态接口返回做脱敏，避免在聊天中泄露完整 token
-   * @param {object} statusData
-   */
-  sanitizeAuthStatusResponse(statusData = {}) {
-    if (!statusData || typeof statusData !== 'object') return {}
-    const clone = JSON.parse(JSON.stringify(statusData))
-    const token = clone.framework_token
-    if (typeof token === 'string' && token.length > 8) {
-      clone.framework_token = `${token.slice(0, 6)}...${token.slice(-4)}`
-    }
-    return clone
-  }
-
-  /**
-   * 在授权流程中回显 /api/v1/authorization/requests/:request_id/status 的响应 JSON
-   * 仅在终态（approved/used/rejected/expired）发送一次，避免轮询刷屏
-   */
-  async replyAuthStatusJson(statusData) {
-    const safeData = this.sanitizeAuthStatusResponse(statusData)
-    const msg = `授权状态接口响应(JSON)：\n${JSON.stringify(safeData, null, 2)}`
-    await this.reply(msg)
-  }
-
-  /**
    * 绑定列表：授权登录账号走 authorization 客户端用户接口（全量展开）
    * GET /api/v1/authorization/clients/:client_id/users/:platform_id
    * 注意：同一个 framework_token 可能对应多个 role_id，不能按 token 去重
@@ -472,16 +448,12 @@ export class EndfieldUid extends plugin {
           if (statusData.framework_token) {
             authData = statusData
             logger.mark(`[终末地插件][授权登陆]用户已授权，request_id=${requestId}`)
-            logger.mark(`[终末地插件][授权登陆]授权响应: ${JSON.stringify(statusData, null, 2)}`)
-            await this.replyAuthStatusJson(statusData)
             break
           }
         } else if (statusData.status === 'rejected') {
-          await this.replyAuthStatusJson(statusData)
           await this.reply(getMessage('enduid.auth_rejected'))
           return true
         } else if (statusData.status === 'expired') {
-          await this.replyAuthStatusJson(statusData)
           await this.reply(getMessage('enduid.auth_expired'))
           return true
         }
