@@ -272,6 +272,7 @@ export class EndfieldGacha extends plugin {
       return true
     }
     const roleId = String(sklUser.endfield_uid || '')
+    const serverId = Number(sklUser.server_id || 1)
     const cacheData = this.readLocalGachaCache(this.e.user_id, roleId)
     const cacheStatsData = cacheData?.stats_data || null
     const hasCacheRecord = cacheStatsData?.has_records === true ||
@@ -311,7 +312,7 @@ export class EndfieldGacha extends plugin {
     // 获取角色/武器头像映射
     let charAvatarMap = {}
     try {
-      const noteRes = await sklUser.sklReq.getData('note')
+      const noteRes = await sklUser.sklReq.getData('note', { roleId, serverId })
       const chars = noteRes?.data?.chars || []
       for (const c of chars) {
         const name = (c.name || '').trim()
@@ -335,7 +336,7 @@ export class EndfieldGacha extends plugin {
       { key: 'weapon', label: '武器池' },
       { key: 'limited', label: '限定角色' }
     ]
-    const noteRes = await sklUser.sklReq.getData('note').catch(() => null)
+    const noteRes = await sklUser.sklReq.getData('note', { roleId, serverId }).catch(() => null)
     const poolResults = poolList.map(({ key }) => this.getCachePoolPage(cacheData, key, page, limit))
 
     if (!recordStatsData) {
@@ -473,6 +474,7 @@ export class EndfieldGacha extends plugin {
       return true
     }
     const roleId = String(sklUser.endfield_uid || '')
+    const serverId = Number(sklUser.server_id || 1)
     const cacheData = options.cacheData || this.readLocalGachaCache(targetUserId, roleId) || {}
     const poolStats = statsData.pool_stats || {}
     const userInfo = statsData.user_info || {}
@@ -488,7 +490,7 @@ export class EndfieldGacha extends plugin {
     let userAvatar = ''
     let userNickname = userInfo.nickname || userInfo.game_uid || '未知'
     try {
-      const noteRes = await sklUser.sklReq.getData('note')
+      const noteRes = await sklUser.sklReq.getData('note', { roleId, serverId })
       const base = noteRes?.data?.base || {}
       userAvatar = base.avatarUrl || ''
       if (base.name) userNickname = base.name

@@ -270,7 +270,7 @@ export class EndfieldUid extends plugin {
         const ts = item?.created_at ? new Date(item.created_at).getTime() : Date.now()
         out.push({
           framework_token: String(item?.framework_token || ''),
-          binding_id: item?.id || '',
+          binding_id: item?.binding_id || item?.id || '',
           user_identifier: userId,
           role_id: roleId,
           nickname: String(bindingInfo.nickname || ''),
@@ -294,22 +294,45 @@ export class EndfieldUid extends plugin {
    * 绑定列表：扫码/手机等账号走第三方客户端绑定列表接口
    * GET /api/v1/bindings?user_identifier=...&client_type=bot
    */
-  async getRemoteBindingMap() {
+  async getRemoteBindingMap(accounts = []) {
     const userId = String(this.e.user_id)
-    const list = await hypergryphAPI.getUnifiedBackendBindings(userId)
+    const [list, remoteAuthAccounts] = await Promise.all([
+      hypergryphAPI.getUnifiedBackendBindings(userId),
+      this.getRemoteAuthorizationAccounts(accounts)
+    ])
     const remoteMap = new Map()
-    if (!Array.isArray(list)) return remoteMap
-    for (const item of list) {
+
+    const addRemoteItem = (item = {}) => {
       const token = String(item?.framework_token || '')
-      if (!token) continue
-      remoteMap.set(token, item)
+      const roleId = String(item?.role_id ?? item?.binding_info?.role_id ?? '')
+      const bindingId = item?.id ?? item?.binding_id ?? ''
+      const normalized = {
+        ...item,
+        role_id: roleId,
+        framework_token: token,
+        binding_id: bindingId
+      }
+      if (token && roleId) remoteMap.set(`tr:${token}:${roleId}`, normalized)
+      if (roleId && !remoteMap.has(`r:${roleId}`)) remoteMap.set(`r:${roleId}`, normalized)
+      if (token && !remoteMap.has(`t:${token}`)) remoteMap.set(`t:${token}`, normalized)
     }
+
+    if (Array.isArray(list)) {
+      for (const item of list) addRemoteItem(item)
+    }
+    if (Array.isArray(remoteAuthAccounts)) {
+      for (const item of remoteAuthAccounts) addRemoteItem(item)
+    }
+
     return remoteMap
   }
 
   applyRemoteBindingData(localAccount, bindingMap) {
     const token = String(localAccount?.framework_token || '')
-    const remote = bindingMap.get(token)
+    const roleIdLocal = String(localAccount?.role_id || '')
+    const remote = bindingMap.get(`tr:${token}:${roleIdLocal}`)
+      || bindingMap.get(`r:${roleIdLocal}`)
+      || bindingMap.get(`t:${token}`)
     if (!remote || typeof remote !== 'object') return localAccount
 
     const bindingInfo = remote.binding_info || {}
@@ -326,6 +349,29 @@ export class EndfieldUid extends plugin {
       server_id: serverId != null && serverId !== '' ? String(serverId) : localAccount.server_id,
       binding_id: bindingId != null && bindingId !== '' ? bindingId : localAccount.binding_id,
       is_active: isActive === false ? false : localAccount.is_active
+    }
+  }
+
+  /**
+   * 登录后立刻通过两个远程接口回填 binding_id：
+   * 1) /api/v1/bindings?user_identifier=...
+   * 2) /api/v1/authorization/clients/:client_id/users/:platform_id
+   */
+  async refreshBindingIdsAfterLogin(accounts = []) {
+    if (!Array.isArray(accounts) || accounts.length === 0) return accounts
+    try {
+      const remoteBindingMap = await this.getRemoteBindingMap(accounts)
+      if (!remoteBindingMap || remoteBindingMap.size === 0) return accounts
+      const synced = accounts.map((acc) => this.applyRemoteBindingData(acc, remoteBindingMap))
+      const changed = JSON.stringify(synced) !== JSON.stringify(accounts)
+      if (changed) {
+        await saveUserBindings(this.e.user_id, synced)
+        logger.mark(`[终末地插件][登录后回填]已更新 binding_id，共 ${synced.length} 个账号`)
+      }
+      return synced
+    } catch (err) {
+      logger.warn(`[终末地插件][登录后回填]刷新 binding_id 失败: ${err?.message || err}`)
+      return accounts
     }
   }
 
@@ -380,6 +426,10 @@ export class EndfieldUid extends plugin {
 
     // 按 role_id 去重，保留所有账号
     accounts = cleanAccounts(accounts)
+
+    // 先写入本地，再通过远程接口刷新正确的 binding_id 并回写
+    await saveUserBindings(this.e.user_id, accounts)
+    accounts = await this.refreshBindingIdsAfterLogin(accounts)
 
     await this.reply(getMessage('enduid.login_ok', { nickname: bindingData.nickname, role_id: bindingData.role_id, server_id: bindingData.server_id || 1, count: accounts.length }))
 
@@ -603,7 +653,7 @@ export class EndfieldUid extends plugin {
     try {
       const [remoteAuthAccounts, bindingMap] = await Promise.all([
         this.getRemoteAuthorizationAccounts(accounts),
-        this.getRemoteBindingMap()
+        this.getRemoteBindingMap(accounts)
       ])
 
       if (Array.isArray(remoteAuthAccounts)) {
@@ -657,12 +707,13 @@ export class EndfieldUid extends plugin {
     const gameDataByIndex = {}
     const notePromises = accounts.map(async (acc, index) => {
       if (!acc.framework_token || !acc.role_id) return
-      // 授权账号展示以 authorization 接口为准，避免同 token 多角色时被 note 覆盖成同一等级
-      if (acc.login_type === 'auth' || acc.login_type === 'cred') return
       try {
         const req = new EndfieldRequest(acc.role_id)
         req.setFrameworkToken(acc.framework_token)
-        const res = await req.getData('note')
+        const res = await req.getData('note', {
+          roleId: String(acc.role_id || ''),
+          serverId: Number(acc.server_id || 1)
+        })
         if (res?.code === 0 && res.data?.base) {
           gameDataByIndex[index] = {
             avatarUrl: res.data.base.avatarUrl || '',
@@ -854,8 +905,27 @@ export class EndfieldUid extends plugin {
     }
 
     // 获取目标绑定账号
-    const targetAccount = accounts[index - 1]
-    
+    let targetAccount = accounts[index - 1]
+
+    // 切换前使用两个远程接口统一刷新 binding_id：
+    // - /api/v1/bindings?user_identifier=...
+    // - /api/v1/authorization/clients/:client_id/users/:platform_id
+    try {
+      const remoteBindingMap = await this.getRemoteBindingMap(accounts)
+      const syncedAccounts = accounts.map((acc) => this.applyRemoteBindingData(acc, remoteBindingMap))
+      const changed = JSON.stringify(syncedAccounts) !== JSON.stringify(accounts)
+      if (changed) {
+        accounts = syncedAccounts
+        await saveUserBindings(this.e.user_id, accounts)
+      }
+      targetAccount = accounts[index - 1]
+      if (targetAccount?.binding_id) {
+        logger.mark(`[终末地插件][切换绑定]目标账号 binding_id=${targetAccount.binding_id}`)
+      }
+    } catch (err) {
+      logger.warn(`[终末地插件][切换绑定]远程刷新 binding_id 失败: ${err?.message || err}`)
+    }
+
     // 先尝试远程切换主绑定
     let remoteSuccess = false
     if (targetAccount.binding_id) {

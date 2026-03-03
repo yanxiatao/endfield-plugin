@@ -66,17 +66,20 @@
               {{/if}}
               <div class="char-info">
                 <span class="char-tag">派驻干员</span>
-                <span class="char-name">{{c.name}}</span>
+                <div class="char-name-row">
+                  <span class="char-name">{{c.name}}</span>
+                  <span class="char-trust-level">{{c.trustLevelName}}</span>
+                </div>
               </div>
             </div>
             <div class="char-card-stats">
               <div class="char-stat">
-                <span class="char-stat-label">体力</span>
-                <span class="char-stat-value">{{c.physicalStrength}}</span>
+                <span class="char-stat-label">心情</span>
+                <span class="char-stat-value">{{c.moodPercent}}%</span>
               </div>
               <div class="char-stat">
-                <span class="char-stat-label">好感</span>
-                <span class="char-stat-value char-stat-fav">{{c.favorability}}</span>
+                <span class="char-stat-label">信赖</span>
+                <span class="char-stat-value char-stat-fav">{{c.trustPercent}}%</span>
               </div>
             </div>
           </div>

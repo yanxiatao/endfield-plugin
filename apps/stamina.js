@@ -18,7 +18,7 @@ export class EndfieldStamina extends plugin {
       },
       rule: [
         {
-          reg: '^(?:[:：]|[/#](?:zmd|终末地))(理智|体力|荔枝)$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))(理智|体力|荔枝)(?:\\s*(\\d+))?$',
           fnc: 'getStamina'
         },
         {
@@ -106,14 +106,27 @@ export class EndfieldStamina extends plugin {
     await this.reply(getMessage('stamina.loading'))
 
     try {
+      const rawMsg = String(this.e.msg || '').trim()
+      const roleIdMatch = rawMsg.match(/(?:理智|体力|荔枝)\s*(\d+)/)
+      const targetRoleId = roleIdMatch ? String(roleIdMatch[1]) : ''
+
       const allUsers = await EndfieldUser.getAllUsers(userId)
       if (allUsers.length === 0) {
         await this.reply(getUnbindMessage())
         return true
       }
 
-      // 并行获取所有账号的理智数据
-      const accountsData = await Promise.all(allUsers.map(sklUser => this.fetchOneStamina(sklUser)))
+      const targetUsers = targetRoleId
+        ? allUsers.filter((u) => String(u.endfield_uid || '') === targetRoleId)
+        : allUsers
+
+      if (targetUsers.length === 0) {
+        await this.reply(`未找到 roleId 为 ${targetRoleId} 的绑定账号，请先用「:绑定列表」确认角色ID。`)
+        return true
+      }
+
+      // 手动查询时补充 note 数据（头像/干员图），用于理智卡片渲染
+      const accountsData = await Promise.all(targetUsers.map(sklUser => this.fetchOneStamina(sklUser, { includeNote: true })))
       const validAccounts = accountsData.filter(a => a !== null)
 
       if (validAccounts.length === 0) {
@@ -159,13 +172,17 @@ export class EndfieldStamina extends plugin {
     }
   }
 
-  /** 获取单个账号的理智结构化数据（含随机干员立绘） */
-  async fetchOneStamina(sklUser) {
+  /** 获取单个账号的理智结构化数据；includeNote=true 时附带头像/干员图 */
+  async fetchOneStamina(sklUser, { includeNote = false } = {}) {
     try {
+      const roleId = String(sklUser?.endfield_uid || '')
+      const serverId = Number(sklUser?.server_id || 1)
       const [res, noteRes, cardRes] = await Promise.all([
-        sklUser.sklReq.getData('stamina'),
-        sklUser.sklReq.getData('note').catch(() => null),
-        sklUser.sklReq.getData('endfield_card_detail').catch(() => null)
+        sklUser.sklReq.getData('stamina', { roleId, serverId }),
+        includeNote ? sklUser.sklReq.getData('note', { roleId, serverId }).catch(() => null) : Promise.resolve(null),
+        includeNote
+          ? sklUser.sklReq.getData('endfield_card_detail', { roleId, serverId }).catch(() => null)
+          : Promise.resolve(null)
       ])
 
       if (!res || res.code !== 0) return null
@@ -173,7 +190,7 @@ export class EndfieldStamina extends plugin {
       const stamina = res.data?.stamina || {}
       const dailyMission = res.data?.dailyMission || {}
       const role = res.data?.role || {}
-      const userBase = noteRes?.code === 0 ? (noteRes.data?.base || {}) : {}
+      const noteBase = noteRes?.code === 0 ? (noteRes.data?.base || {}) : {}
 
       const current = Number(stamina.current || 0)
       const max = Number(stamina.max || 0)
@@ -181,6 +198,16 @@ export class EndfieldStamina extends plugin {
       const recover = Number(stamina.recover || 360)
       const activation = Number(dailyMission.activation ?? 0)
       const maxActivation = Number(dailyMission.maxActivation ?? 100)
+      let operatorImg = ''
+      if (cardRes?.code === 0) {
+        const chars = cardRes.data?.detail?.chars || []
+        const illustrations = chars
+          .map(c => (c.charData || c).illustrationUrl || '')
+          .filter(Boolean)
+        if (illustrations.length > 0) {
+          operatorImg = illustrations[Math.floor(Math.random() * illustrations.length)]
+        }
+      }
 
       let fullTime = '未知'
       if (current >= max && max > 0) {
@@ -194,28 +221,16 @@ export class EndfieldStamina extends plugin {
         fullTime = recoverTime.toLocaleString('zh-CN')
       }
 
-      // 从干员列表中随机选一个立绘
-      let operatorImg = ''
-      if (cardRes?.code === 0) {
-        const chars = cardRes.data?.detail?.chars || []
-        const illustrations = chars
-          .map(c => (c.charData || c).illustrationUrl || '')
-          .filter(Boolean)
-        if (illustrations.length > 0) {
-          operatorImg = illustrations[Math.floor(Math.random() * illustrations.length)]
-        }
-      }
-
       return {
         current,
         max,
         fullTime,
         activation,
         maxActivation,
-        userAvatar: userBase.avatarUrl || '',
-        userName: userBase.name || role.name || sklUser.nickname || '未知',
-        userLevel: userBase.level ?? role.level ?? 0,
-        userUid: userBase.roleId || role.roleId || sklUser.endfield_uid || '未知',
+        userAvatar: noteBase.avatarUrl || '',
+        userName: role.name || noteBase.name || sklUser.nickname || '未知',
+        userLevel: role.level ?? noteBase.level ?? 0,
+        userUid: role.roleId || noteBase.roleId || sklUser.endfield_uid || '未知',
         operatorImg
       }
     } catch (err) {

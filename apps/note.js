@@ -32,9 +32,11 @@ export class EndfieldNote extends plugin {
     await this.reply(getMessage('note.loading'))
 
     try {
+      const roleId = String(sklUser.endfield_uid || '')
+      const serverId = Number(sklUser.server_id || 1)
       const [detailData, staminaRes] = await Promise.all([
         this.fetchCharacterDetail(sklUser),
-        sklUser.sklReq.getData('stamina')
+        sklUser.sklReq.getData('stamina', { roleId, serverId })
       ])
       if (!detailData) return true
 
@@ -140,7 +142,9 @@ export class EndfieldNote extends plugin {
   }
 
   async fetchCharacterDetail(sklUser) {
-    const res = await sklUser.sklReq.getData('note')
+    const roleId = String(sklUser.endfield_uid || '')
+    const serverId = Number(sklUser.server_id || 1)
+    const res = await sklUser.sklReq.getData('note', { roleId, serverId })
 
     if (!res || res.code !== 0) {
       logger.error(`[终末地便签]获取角色信息失败: ${JSON.stringify(res)}`)

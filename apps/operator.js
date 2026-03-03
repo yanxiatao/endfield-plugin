@@ -291,7 +291,9 @@ export class EndfieldOperator extends plugin {
     await this.reply(getMessage('operator.loading_detail'))
 
     try {
-      const res = await sklUser.sklReq.getData('note')
+      const roleId = String(sklUser.endfield_uid || '')
+      const serverId = Number(sklUser.server_id || 1)
+      const res = await sklUser.sklReq.getData('note', { roleId, serverId })
       
       if (!res || res.code !== 0) {
         logger.error(`[终末地干员]获取干员列表失败: ${JSON.stringify(res)}`)
@@ -349,7 +351,7 @@ export class EndfieldOperator extends plugin {
       if (enableFriendPanel) templateId = friendCharTemplateId
 
       const [operatorRes, friendCharResRaw] = await Promise.all([
-        sklUser.sklReq.getData('endfield_card_char', { instId }),
+        sklUser.sklReq.getData('endfield_card_char', { instId, roleId, serverId }),
         (enableFriendPanel && templateId && friendRoleId)
           ? sklUser.sklReq.getData('friend_char', { role_id: friendRoleId, template_id: templateId }).catch(() => false)
           : Promise.resolve(false)
@@ -522,7 +524,9 @@ export class EndfieldOperator extends plugin {
   }
 
   async fetchCharacterDetail(sklUser) {
-    const res = await sklUser.sklReq.getData('note')
+    const roleId = String(sklUser.endfield_uid || '')
+    const serverId = Number(sklUser.server_id || 1)
+    const res = await sklUser.sklReq.getData('note', { roleId, serverId })
     if (!res || res.code !== 0) {
       logger.error(`[终末地干员]获取角色信息失败: ${JSON.stringify(res)}`)
       await this.reply(getMessage('common.get_role_failed'))
@@ -604,8 +608,10 @@ export class EndfieldOperator extends plugin {
       }
 
       // 4) 获取全量干员列表，使用同步角色覆盖展示数据
+      const roleId = String(sklUser.endfield_uid || '')
+      const serverId = Number(sklUser.server_id || 1)
       const [res, friendDetailRes] = await Promise.all([
-        sklUser.sklReq.getData('endfield_card_detail'),
+        sklUser.sklReq.getData('endfield_card_detail', { roleId, serverId }),
         sklUser.sklReq.getData('friend_detail').catch(() => false)
       ])
 

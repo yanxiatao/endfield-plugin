@@ -33,6 +33,16 @@
 - **公告推送去重**
   - 新增公告“已处理签名”缓存，非新公告不渲染不发送
   - 推送失败为 `Unknown Channel` 时自动移除失效群订阅，避免重复报错
+- **多角色防串号参数对齐**
+  - `note`、`stamina`、`spaceship`、`card/detail`、`card/char` 相关调用统一显式透传 `roleId + serverId`
+  - 覆盖 `area`、`note`、`operator`、`gacha`、`stamina`、`enduid` 等模块，减少默认角色回退导致的数据串号
+- **帝江号建设展示调整**
+  - 派驻干员卡片新增信赖等级标签（`trustLevelName`）
+  - 数值展示改为 `心情(moodPercent)` 与 `信赖(trustPercent)`
+  - 移除卡片中的“体力原始值 / 好感原始值”显示，界面信息更聚焦
+- **理智卡片干员图来源调整**
+  - `stamina` 背景干员图改为从 `card/detail` 的 `illustrationUrl` 随机选取
+  - 不再使用 `note.chars` 的头像字段作为理智卡干员图
 
 ### fix
 - **授权登录输出优化**
@@ -43,6 +53,9 @@
   - 修复同步链路变量引用问题，确保缓存写入角色 ID 正确
 - **仓库忽略规则**
   - 更新 `.gitignore`，忽略 `data/**/*.json` 本地缓存文件，保留 `.gitkeep`
+- **绑定列表授权账号头像**
+  - `:绑定列表` 中授权账号不再跳过 `note` 拉取，按各自 `roleId/serverId` 获取头像
+  - 修复授权多角色场景下仅部分账号显示头像的问题
 
 ### docs
 - **文案更新**

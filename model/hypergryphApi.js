@@ -311,9 +311,13 @@ let hypergryphAPI = {
   async setUnifiedBackendPrimaryBinding(bindingId, userIdentifier) {
     const config = getUnifiedBackendConfig()
     const headers = config.apiKey ? { 'X-API-Key': config.apiKey } : {}
-    const queryParams = userIdentifier ? `?user_identifier=${userIdentifier}&client_type=bot` : ''
+    const queryParams = userIdentifier
+      ? `?user_identifier=${encodeURIComponent(String(userIdentifier))}`
+      : ''
 
     try {
+      // 兼容后端按 user_identifier 定位调用方绑定上下文：
+      // POST /api/v1/bindings/:id/primary?user_identifier=...
       const response = await fetch(`${config.baseUrl}/api/v1/bindings/${bindingId}/primary${queryParams}`, {
         timeout: 25000,
         method: 'post',

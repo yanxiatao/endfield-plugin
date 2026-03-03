@@ -41,7 +41,10 @@ export class EndfieldArea extends plugin {
       // 并行获取地区数据、用户基础信息、干员列表（用于派驻角色头像）
       const [zoneData, noteRes, cardDetailRes] = await Promise.all([
         this.fetchZoneData(sklUser),
-        sklUser.sklReq.getData('note').catch(() => null),
+        sklUser.sklReq.getData('note', {
+          roleId: String(sklUser.endfield_uid || ''),
+          serverId: sklUser.server_id || 1
+        }).catch(() => null),
         sklUser.sklReq.getData('endfield_card_detail', {
           roleId: String(sklUser.endfield_uid || ''),
           serverId: sklUser.server_id || 1
@@ -216,7 +219,10 @@ export class EndfieldArea extends plugin {
       // 并行获取帝江号数据、用户基础信息、干员列表（用于头像）
       const [shipData, noteRes, cardDetailRes] = await Promise.all([
         this.fetchSpaceshipData(sklUser),
-        sklUser.sklReq.getData('note').catch(() => null),
+        sklUser.sklReq.getData('note', {
+          roleId: String(sklUser.endfield_uid || ''),
+          serverId: sklUser.server_id || 1
+        }).catch(() => null),
         sklUser.sklReq.getData('endfield_card_detail', {
           roleId: String(sklUser.endfield_uid || ''),
           serverId: sklUser.server_id || 1
@@ -224,7 +230,7 @@ export class EndfieldArea extends plugin {
       ])
       if (!shipData) return true
 
-      const { rooms, charNameMap, role } = shipData
+      const { rooms, charNameMap, role, relationLevels } = shipData
       if (!rooms || rooms.length === 0) {
         await this.reply(getMessage('spaceship.not_found_info'))
         return true
@@ -253,7 +259,10 @@ export class EndfieldArea extends plugin {
           name: charNameMap[c.charId] || c.charId || '未知',
           avatar: charAvatarMap[c.charId] || '',
           physicalStrength: Math.round(c.physicalStrength ?? 0),
-          favorability: c.favorability ?? 0
+          favorability: Math.round(c.favorability ?? 0),
+          moodPercent: this.calcMoodPercent(c.physicalStrength, c.moodPercent),
+          trustPercent: this.calcTrustPercent(c.favorability, c.trustPercent),
+          trustLevelName: this.resolveTrustLevelName(c.favorability, c.trustLevelName, relationLevels)
         }))
         return {
           roomName,
@@ -303,7 +312,7 @@ export class EndfieldArea extends plugin {
         }
         msg += `  干员：${room.chars.length}人\n`
         for (const c of room.chars) {
-          msg += `  • ${c.name}（体力${c.physicalStrength}，好感${c.favorability}）\n`
+          msg += `  • ${c.name}（${c.trustLevelName}，心情${c.moodPercent}% / 体力${c.physicalStrength}，信赖${c.trustPercent}% / 好感${c.favorability}）\n`
         }
       }
 
@@ -319,7 +328,9 @@ export class EndfieldArea extends plugin {
   }
 
   async fetchSpaceshipData(sklUser) {
-    const res = await sklUser.sklReq.getData('spaceship')
+    const roleId = String(sklUser.endfield_uid || '')
+    const serverId = Number(sklUser.server_id || 1)
+    const res = await sklUser.sklReq.getData('spaceship', { roleId, serverId })
 
     if (!res || res.code !== 0) {
       logger.error(`[终末地帝江号建设]获取建设信息失败: ${JSON.stringify(res)}`)
@@ -330,9 +341,42 @@ export class EndfieldArea extends plugin {
     const spaceShip = res.data?.spaceShip || {}
     const charNameMap = res.data?.charNameMap || {}
     const role = res.data?.role || {}
+    const relationLevels = Array.isArray(res.data?.relationLevels) ? res.data.relationLevels : []
     const rooms = spaceShip.rooms || []
 
-    return { rooms, charNameMap, role }
+    return { rooms, charNameMap, role, relationLevels }
+  }
+
+  calcMoodPercent(physicalStrength, moodPercent) {
+    if (Number.isFinite(Number(moodPercent))) return Math.max(0, Math.min(100, Math.round(Number(moodPercent))))
+    const raw = Number(physicalStrength || 0)
+    return Math.max(0, Math.min(100, Math.floor((raw / 10000) * 100)))
+  }
+
+  calcTrustPercent(favorability, trustPercent) {
+    if (Number.isFinite(Number(trustPercent))) return Math.max(0, Math.min(200, Math.round(Number(trustPercent))))
+    const fav = Number(favorability || 0)
+    if (fav >= 1500) return 200
+    if (fav >= 300) return 100 + Math.floor(((fav - 300) / 1200) * 100)
+    return Math.floor((fav / 300) * 100)
+  }
+
+  resolveTrustLevelName(favorability, trustLevelName, relationLevels = []) {
+    if (trustLevelName) return String(trustLevelName)
+    const levels = Array.isArray(relationLevels) ? relationLevels : []
+    if (levels.length > 0) {
+      const fav = Number(favorability || 0)
+      let hit = levels[0]
+      for (const lv of levels) {
+        if (fav >= Number(lv?.threshold ?? 0)) hit = lv
+      }
+      const levelName = String(hit?.name || '').trim()
+      if (levelName) return levelName
+    }
+    const fav = Number(favorability || 0)
+    if (fav >= 1500) return '信任'
+    if (fav >= 300) return '亲近'
+    return '友好'
   }
 
   // ==================== 工具方法 ====================
