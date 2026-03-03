@@ -5,12 +5,16 @@ import EndfieldRequest from '../model/endfieldReq.js'
 import hypergryphAPI from '../model/hypergryphApi.js'
 import setting from '../utils/setting.js'
 import { getCopyright } from '../utils/copyright.js'
+import fs from 'node:fs'
+import path from 'node:path'
 
 const GACHA_KEYS = {
   pending: (userId) => `ENDFIELD:GACHA_PENDING:${userId}`,
   lastAnalysis: (userId) => `ENDFIELD:GACHA_LAST_ANALYSIS:${userId}`,
 }
 const SYNC_MS = { pollInterval: 1500, pollTimeout: Infinity }
+const GACHA_CACHE_DIR = path.join(process.cwd(), 'plugins', 'endfield-plugin', 'data', 'gacha')
+const GACHA_POOLS = ['limited', 'standard', 'beginner', 'weapon']
 
 /**
  * 保底常量
@@ -45,7 +49,7 @@ export class EndfieldGacha extends plugin {
       priority: 50,
       rule: [
         {
-          reg: '^(?:[:：]|[/#](?:zmd|终末地))(?:同步)?抽卡记录(?:\\s*(.+))?$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))(?:(?:同步|更新))?抽卡记录(?:\\s*(.+))?$',
           fnc: 'viewGachaRecords'
         },
         {
@@ -68,6 +72,131 @@ export class EndfieldGacha extends plugin {
         }
       ]
     })
+  }
+
+  ensureGachaCacheDir() {
+    if (!fs.existsSync(GACHA_CACHE_DIR)) {
+      fs.mkdirSync(GACHA_CACHE_DIR, { recursive: true })
+    }
+  }
+
+  getGachaCacheFile(userId, roleId) {
+    const uid = String(userId || '0')
+    const rid = String(roleId || '0')
+    return path.join(GACHA_CACHE_DIR, `${uid}_${rid}.json`)
+  }
+
+  readLocalGachaCache(userId, roleId) {
+    try {
+      this.ensureGachaCacheDir()
+      const file = this.getGachaCacheFile(userId, roleId)
+      if (!fs.existsSync(file)) return null
+      const raw = fs.readFileSync(file, 'utf8')
+      if (!raw) return null
+      const data = JSON.parse(raw)
+      if (!data || typeof data !== 'object') return null
+      return data
+    } catch (err) {
+      logger.error(`[终末地插件][抽卡缓存]读取失败: ${err?.message || err}`)
+      return null
+    }
+  }
+
+  writeLocalGachaCache(userId, roleId, payload) {
+    try {
+      this.ensureGachaCacheDir()
+      const file = this.getGachaCacheFile(userId, roleId)
+      fs.writeFileSync(file, JSON.stringify(payload, null, 2), 'utf8')
+      return true
+    } catch (err) {
+      logger.error(`[终末地插件][抽卡缓存]写入失败: ${err?.message || err}`)
+      return false
+    }
+  }
+
+  getCachePoolRecords(cacheData, poolKey) {
+    const pools = cacheData?.records_by_pool || {}
+    const rows = Array.isArray(pools?.[poolKey]) ? pools[poolKey] : []
+    return rows
+  }
+
+  getCachePoolPage(cacheData, poolKey, page = 1, limit = 10) {
+    const rows = this.getCachePoolRecords(cacheData, poolKey)
+    const sorted = [...rows].sort((a, b) => {
+      const sa = Number(a?.seq_id)
+      const sb = Number(b?.seq_id)
+      if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sb - sa
+      const ta = Number(a?.gacha_ts || 0)
+      const tb = Number(b?.gacha_ts || 0)
+      return tb - ta
+    })
+    const total = sorted.length
+    const pages = Math.max(1, Math.ceil(total / limit))
+    const current = Math.min(Math.max(1, page), pages)
+    const start = (current - 1) * limit
+    return {
+      records: sorted.slice(start, start + limit),
+      total,
+      pages,
+      page: current
+    }
+  }
+
+  async refreshLocalGachaCacheFromCloud(token, userId, roleId) {
+    // 后端 completed 后可能存在短暂可见性延迟，这里做小次数重试，确保 records 能落本地
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const [statsData, ...poolDataList] = await Promise.all([
+          hypergryphAPI.getGachaStats(token),
+          ...GACHA_POOLS.map((pool) => hypergryphAPI.getGachaRecordsAllPages(token, { pools: pool, limit: 500 }))
+        ])
+        if (!statsData) {
+          if (attempt < 3) {
+            await this.sleep(1500)
+            continue
+          }
+          return false
+        }
+
+        const recordsByPool = {}
+        let recordsTotal = 0
+        GACHA_POOLS.forEach((pool, idx) => {
+          const r = poolDataList[idx]
+          recordsByPool[pool] = Array.isArray(r?.records) ? r.records : []
+          recordsTotal += recordsByPool[pool].length
+        })
+
+        const payload = {
+          version: 1,
+          user_id: String(userId || ''),
+          role_id: String(roleId || ''),
+          updated_at: Date.now(),
+          stats_data: statsData,
+          records_by_pool: recordsByPool
+        }
+        const written = this.writeLocalGachaCache(userId, roleId, payload)
+        if (!written) return false
+
+        const statsTotal = Number(statsData?.stats?.total_count ?? 0)
+        if (recordsTotal === 0 && statsTotal === 0 && attempt < 3) {
+          await this.sleep(1500)
+          continue
+        }
+        return true
+      } catch (err) {
+        logger.error(`[终末地插件][抽卡缓存]云端刷新失败(第${attempt}次): ${err?.message || err}`)
+        if (attempt < 3) {
+          await this.sleep(1500)
+          continue
+        }
+        return false
+      }
+    }
+  }
+
+  getAccountServerId(account) {
+    const sid = account?.server_id ?? account?.serverId ?? account?.game_server_id ?? 1
+    return String(sid || 1)
   }
 
   async getCurrentUpFromBiliWiki() {
@@ -134,32 +263,47 @@ export class EndfieldGacha extends plugin {
 
   /** 查看抽卡记录：四个卡池合并到一张图中展示，支持 :抽卡记录 <页码>；带「同步」则先同步再展示 */
   async viewGachaRecords() {
-    const wantsSync = /同步/.test(this.e.msg || '')
+    const rawMsg = String(this.e.msg || '')
+    const wantsSync = /(同步|更新)\s*抽卡记录/.test(rawMsg)
     
     const sklUser = new EndfieldUser(this.e.user_id)
     if (!(await sklUser.getUser())) {
       await this.reply(getUnbindMessage())
       return true
     }
+    const roleId = String(sklUser.endfield_uid || '')
+    const cacheData = this.readLocalGachaCache(this.e.user_id, roleId)
+    const cacheStatsData = cacheData?.stats_data || null
+    const hasCacheRecord = cacheStatsData?.has_records === true ||
+      (cacheStatsData?.last_fetch != null && String(cacheStatsData.last_fetch).trim() !== '') ||
+      ((cacheStatsData?.stats?.total_count ?? 0) > 0)
 
-    // 检查是否有数据
-    const checkStatsData = await hypergryphAPI.getGachaStats(sklUser.framework_token)
-    const hasRecord = checkStatsData?.has_records === true ||
-      (checkStatsData?.last_fetch != null && String(checkStatsData.last_fetch).trim() !== '') ||
-      ((checkStatsData?.stats?.total_count ?? 0) > 0)
-
-    // 如果需要同步或没有数据，则执行同步
-    if (wantsSync || !hasRecord) {
+    // 仅 "同步抽卡记录 / 更新抽卡记录" 使用云端同步
+    if (wantsSync) {
       return await this.syncGacha({
         afterSyncShowRecords: true,
         fromSync: true,
-        isFirstSync: !hasRecord,
+        isFirstSync: !hasCacheRecord,
+        selectPrompt: getMessage('gacha.select_account_sync')
+      })
+    }
+
+    const recordStatsData = cacheData?.stats_data || null
+    const hasRecord = recordStatsData?.has_records === true ||
+      (recordStatsData?.last_fetch != null && String(recordStatsData.last_fetch).trim() !== '') ||
+      ((recordStatsData?.stats?.total_count ?? 0) > 0)
+    if (!cacheData || !hasRecord) {
+      await this.reply(getMessage('gacha.no_records'))
+      return await this.syncGacha({
+        afterSyncShowRecords: true,
+        fromSync: true,
+        isFirstSync: true,
         selectPrompt: getMessage('gacha.select_account_sync')
       })
     }
 
     // 解析页码参数
-    const argStr = (this.e.msg || '').replace(/.*抽卡记录(?:同步)?\s*/, '').trim()
+    const argStr = rawMsg.replace(/.*抽卡记录\s*/, '').trim()
     const page = (argStr && Number.isFinite(parseInt(argStr, 10))) ? Math.max(1, parseInt(argStr, 10)) : 1
     const limit = 10
     const pluResPath = this.e?.runtime?.path?.plugin?.['endfield-plugin']?.res || ''
@@ -175,22 +319,6 @@ export class EndfieldGacha extends plugin {
         if (name && url) charAvatarMap[name] = url
       }
     } catch (e) {}
-    try {
-      const poolCharsData = await hypergryphAPI.getGachaPoolChars()
-      const pools = poolCharsData?.pools || []
-      for (const p of pools) {
-        for (const list of [p.star6_chars, p.star5_chars, p.star4_chars]) {
-          if (!Array.isArray(list)) continue
-          for (const c of list) {
-            const name = (c.name || '').trim()
-            const cover = c.cover || ''
-            if (name && cover && !charAvatarMap[name]) charAvatarMap[name] = cover
-          }
-        }
-      }
-    } catch (e) {}
-
-
     let upCharNames = []
     let upWeaponName = ''
     const biliUp = await this.getCurrentUpFromBiliWiki()
@@ -198,19 +326,7 @@ export class EndfieldGacha extends plugin {
       upCharNames = biliUp.upCharNames
       if (biliUp.upWeaponName) upWeaponName = biliUp.upWeaponName
     }
-    if (upCharNames.length === 0) {
-      try {
-        const globalData = await hypergryphAPI.getGachaGlobalStats()
-        const gs = globalData?.stats || globalData
-        const cp = gs?.current_pool || globalData?.current_pool
-        if (cp) {
-          const n = String(cp.up_char_name ?? cp.upCharName ?? '').trim()
-          if (n) upCharNames = [n]
-          const w = String(cp.up_weapon_name ?? cp.upWeaponName ?? '').trim()
-          if (w) upWeaponName = w
-        }
-      } catch (e) {}
-    }
+    if (upCharNames.length === 0) upCharNames = []
 
 
     const poolList = [
@@ -219,13 +335,8 @@ export class EndfieldGacha extends plugin {
       { key: 'weapon', label: '武器池' },
       { key: 'limited', label: '限定角色' }
     ]
-    const [recordStatsData, noteRes, ...poolResults] = await Promise.all([
-      hypergryphAPI.getGachaStats(sklUser.framework_token),
-      sklUser.sklReq.getData('note').catch(() => null),
-      ...poolList.map(({ key }) =>
-        hypergryphAPI.getGachaRecords(sklUser.framework_token, { page, limit, pools: key }).catch(() => null)
-      )
-    ])
+    const noteRes = await sklUser.sklReq.getData('note').catch(() => null)
+    const poolResults = poolList.map(({ key }) => this.getCachePoolPage(cacheData, key, page, limit))
 
     if (!recordStatsData) {
       await this.reply(getMessage('gacha.no_records'))
@@ -329,15 +440,17 @@ export class EndfieldGacha extends plugin {
       await this.reply(getUnbindMessage())
       return true
     }
-    
-    // 检查是否有数据
-    const statsData = await hypergryphAPI.getGachaStats(sklUser.framework_token)
+
+    const roleId = String(sklUser.endfield_uid || '')
+    const cacheData = this.readLocalGachaCache(this.e.user_id, roleId)
+    const statsData = cacheData?.stats_data || null
     const hasRecord = statsData?.has_records === true ||
       (statsData?.last_fetch != null && String(statsData.last_fetch).trim() !== '') ||
       ((statsData?.stats?.total_count ?? 0) > 0)
-    
-    // 如果没有数据，自动执行同步
+
+    // 无本地记录时自动开始同步
     if (!statsData || !hasRecord) {
+      await this.reply(getMessage('gacha.no_records'))
       return await this.syncGacha({
         afterSyncSendAnalysis: true,
         fromAnalysis: true,
@@ -347,7 +460,7 @@ export class EndfieldGacha extends plugin {
     }
     
     // 有数据则直接出图
-    await this.renderGachaAnalysisAndReply(statsData)
+    await this.renderGachaAnalysisAndReply(statsData, { cacheData })
     return true
   }
 
@@ -359,6 +472,8 @@ export class EndfieldGacha extends plugin {
       await this.reply(getUnbindMessage())
       return true
     }
+    const roleId = String(sklUser.endfield_uid || '')
+    const cacheData = options.cacheData || this.readLocalGachaCache(targetUserId, roleId) || {}
     const poolStats = statsData.pool_stats || {}
     const userInfo = statsData.user_info || {}
     const getPool = (charKey, shortKey) => poolStats[charKey] || poolStats[shortKey] || {}
@@ -416,25 +531,7 @@ export class EndfieldGacha extends plugin {
       upCharName = biliUp.upCharName || upCharNames.join('、')
       if (biliUp.upWeaponName) upWeaponName = biliUp.upWeaponName
     }
-    if (upCharNames.length === 0) {
-      try {
-        const globalData = await hypergryphAPI.getGachaGlobalStats()
-        const stats = globalData?.stats || globalData
-        const currentPool = stats?.current_pool || globalData?.current_pool
-        if (currentPool) {
-          upCharName = String(currentPool.up_char_name ?? currentPool.upCharName ?? '').trim()
-          upWeaponName = String(currentPool.up_weapon_name ?? currentPool.upWeaponName ?? '').trim()
-        }
-        if (!upCharName && stats?.ranking?.limited?.six_star?.length) {
-          const first = stats.ranking.limited.six_star[0]
-          if (first) {
-            upCharName = String(first.char_name ?? '').trim()
-          }
-        }
-      } catch (e) {
-        logger.error(`[终末地插件][抽卡分析]获取 current_pool 失败: ${e?.message || e}`)
-      }
-    }
+    if (!upCharName && upCharNames.length > 0) upCharName = upCharNames.join('、')
 
 
     const buildPoolEntry = (records, opts) => {
@@ -601,15 +698,8 @@ export class EndfieldGacha extends plugin {
 
     const charPoolKeys = ['limited', 'standard', 'beginner']
     let charRecords = []
-    try {
-      const charResults = await Promise.all(
-        charPoolKeys.map((key) => hypergryphAPI.getGachaRecordsAllPages(sklUser.framework_token, { pools: key, limit: 500 }))
-      )
-      for (const res of charResults) {
-        if (res?.records?.length) charRecords = charRecords.concat(res.records)
-      }
-    } catch (e) {
-      logger.error(`[终末地插件][抽卡分析]获取角色池记录失败: ${e?.message || e}`)
+    for (const key of charPoolKeys) {
+      charRecords = charRecords.concat(this.getCachePoolRecords(cacheData, key))
     }
     const charByPoolName = {}
     const charFreeByPoolName = {}
@@ -899,13 +989,7 @@ export class EndfieldGacha extends plugin {
     })
 
     // 武器池：按 pool_name 分开展示（星声申领、熔铸申领等）
-    let weaponRecords = []
-    try {
-      const weaponRes = await hypergryphAPI.getGachaRecordsAllPages(sklUser.framework_token, { pools: 'weapon', limit: 500 })
-      weaponRecords = weaponRes?.records || []
-    } catch (e) {
-      logger.error(`[终末地插件][抽卡分析]获取武器池记录失败: ${e?.message || e}`)
-    }
+    const weaponRecords = this.getCachePoolRecords(cacheData, 'weapon')
     const weaponByPoolName = {}
     const weaponFreeByPoolName = {}
     for (const r of weaponRecords) {
@@ -1134,12 +1218,14 @@ export class EndfieldGacha extends plugin {
       if (syncMsg) await this.reply(syncMsg, false, { at: !!this.e.isGroup })
       return
     }
-    const statsData = await hypergryphAPI.getGachaStats(sklUser.framework_token)
+    const roleId = String(sklUser.endfield_uid || '')
+    const cacheData = this.readLocalGachaCache(uid, roleId)
+    const statsData = cacheData?.stats_data || null
     if (!statsData) {
       if (syncMsg) await this.reply(syncMsg, false, { at: !!this.e.isGroup })
       return
     }
-    const opts = { targetUserId: uid }
+    const opts = { targetUserId: uid, cacheData }
     if (syncMsg) opts.syncMsg = syncMsg
     await this.renderGachaAnalysisAndReply(statsData, opts)
   }
@@ -1378,16 +1464,23 @@ export class EndfieldGacha extends plugin {
       }
       const active = accounts.find((a) => a.is_active === true) || accounts[0]
       const token = active?.framework_token
-      const roleId = active?.role_id != null ? String(active.role_id) : null
       if (!token) continue
       const accountsData = await hypergryphAPI.getGachaAccounts(token)
       if (!accountsData?.accounts?.length) continue
       const gachaAccounts = accountsData.accounts
       if (gachaAccounts.length === 1) {
-        tasks.push({ token, accountUid: gachaAccounts[0]?.uid || null, roleId })
+        tasks.push({
+          token,
+          accountUid: gachaAccounts[0]?.uid || null,
+          serverId: this.getAccountServerId(gachaAccounts[0])
+        })
       } else {
         for (const acc of gachaAccounts) {
-          tasks.push({ token, accountUid: acc?.uid || null, roleId })
+          tasks.push({
+            token,
+            accountUid: acc?.uid || null,
+            serverId: this.getAccountServerId(acc)
+          })
         }
       }
     }
@@ -1399,7 +1492,7 @@ export class EndfieldGacha extends plugin {
     let skipped = 0
     for (let i = 0; i < tasks.length; i++) {
       if (i > 0) await this.sleep(3000)
-      const { token, accountUid, roleId } = tasks[i]
+      const { token, accountUid, serverId } = tasks[i]
       const statusData = await hypergryphAPI.getGachaSyncStatus(token)
       if (statusData?.status === 'syncing') {
         skipped++
@@ -1407,7 +1500,7 @@ export class EndfieldGacha extends plugin {
       }
       const body = {}
       if (accountUid) body.account_uid = accountUid
-      if (roleId) body.role_id = roleId
+      if (serverId) body.server_id = serverId
       const res = await hypergryphAPI.postGachaFetch(token, body)
       if (res?.status === 'conflict') skipped++
       else if (res?.status) triggered++
@@ -1482,7 +1575,7 @@ export class EndfieldGacha extends plugin {
     }
 
     const selectedUid = accounts[0]?.uid || null
-    const roleId = sklUser.endfield_uid ? String(sklUser.endfield_uid) : null
+    const selectedServerId = this.getAccountServerId(accounts[0])
     const qqName = this.e.sender?.nickname || this.e.sender?.card || String(this.e.user_id)
     
     // 只有一个账号时，在开始同步前发送提示
@@ -1495,7 +1588,7 @@ export class EndfieldGacha extends plugin {
       }
     }
     
-    await this.startFetchAndPoll(token, selectedUid, roleId, targetUserId, qqName, {
+    await this.startFetchAndPoll(token, selectedUid, selectedServerId, targetUserId, qqName, {
       afterSyncSendAnalysis: options?.afterSyncSendAnalysis,
       fromAnalysis: options?.fromAnalysis,
       fromSync: options?.fromSync
@@ -1561,9 +1654,8 @@ export class EndfieldGacha extends plugin {
     await this.reply(getMessage('gacha.account_selected'))
     const account = data.accounts[index - 1]
     const selectedUid = account?.uid || null
+    const selectedServerId = this.getAccountServerId(account)
     const targetUserId = data.target_user_id || this.e.user_id
-    const sklUser = new EndfieldUser(targetUserId)
-    const roleId = (await sklUser.getUser()) && sklUser.endfield_uid ? String(sklUser.endfield_uid) : null
     const qqName = this.e.sender?.nickname || this.e.sender?.card || String(this.e.user_id)
     
     // 用户选择账号后，发送开始同步提示
@@ -1576,7 +1668,7 @@ export class EndfieldGacha extends plugin {
       }
     }
     
-    await this.startFetchAndPoll(data.token, selectedUid, roleId, targetUserId, qqName, {
+    await this.startFetchAndPoll(data.token, selectedUid, selectedServerId, targetUserId, qqName, {
       afterSyncSendAnalysis: data.afterSyncSendAnalysis,
       fromAnalysis: data.fromAnalysis,
       fromSync: data.fromSync
@@ -1586,15 +1678,15 @@ export class EndfieldGacha extends plugin {
 
   /**
    * 启动同步任务并轮询直到 completed / failed
-   * 后端根据 body.role_id 判断：数据库已有相同 roleId 则增量，否则全量
+   * 同步流程：accounts -> fetch(account_uid/server_id) -> status 轮询 -> records 落本地缓存
    * @param {string} token 用户 framework_token
    * @param {string|null} accountUid 多账号时选中的 uid
-   * @param {string|null} roleId 当前角色 ID，供后端判断增量/全量
+   * @param {string|null} serverId 服务器 ID（默认 1）
    * @param {string|number} [userId] 当前 QQ 号，用于日志占位符 {qq号}
    * @param {string} [qqName] 当前 QQ 昵称，用于日志占位符 {qqname}
    * @param {{ afterSyncSendAnalysis?: boolean, fromAnalysis?: boolean }} [options] 同步完成后发抽卡分析图；fromAnalysis 为 true 时不发「开始同步」类提示（由抽卡分析已发过）
    */
-  async startFetchAndPoll(token, accountUid, roleId, userId, qqName, options = {}) {
+  async startFetchAndPoll(token, accountUid, serverId, userId, qqName, options = {}) {
     const afterSyncSendAnalysis = options?.afterSyncSendAnalysis ?? false
     const fromAnalysis = options?.fromAnalysis ?? false
     const fromSync = options?.fromSync ?? false
@@ -1607,7 +1699,7 @@ export class EndfieldGacha extends plugin {
 
     const body = {}
     if (accountUid) body.account_uid = accountUid
-    if (roleId) body.role_id = roleId
+    body.server_id = String(serverId || '1')
     const fetchRes = await hypergryphAPI.postGachaFetch(token, body)
     if (fetchRes && fetchRes.status === 'conflict') {
       await this.reply(getMessage('gacha.sync_busy'))
@@ -1659,6 +1751,9 @@ export class EndfieldGacha extends plugin {
             new_records: added,
             pool_detail: poolLine
           })
+          const cacheUser = new EndfieldUser(userId)
+          const cacheRoleId = (await cacheUser.getUser()) ? String(cacheUser.endfield_uid || '') : ''
+          await this.refreshLocalGachaCacheFromCloud(token, userId, cacheRoleId)
           // 同步完成文字 + 分析图始终合并为一条消息发送
           await this.renderAndSendGachaAnalysis(syncDoneMsg, userId)
           return

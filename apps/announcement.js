@@ -9,6 +9,7 @@ import setting from '../utils/setting.js'
 import Runtime from '../../../lib/plugins/runtime.js'
 
 const REDIS_ANNOUNCE_SUB = 'ENDFIELD:ANNOUNCEMENT_SUBSCRIBE'
+const REDIS_ANNOUNCE_LAST_SEEN = 'ENDFIELD:ANNOUNCEMENT_LAST_SEEN'
 
 /** 从公告项中取封面图 URL（兼容 images 为字符串数组或对象数组） */
 function getCoverUrl(item) {
@@ -172,6 +173,22 @@ export class announcement extends plugin {
     await redis.set(REDIS_ANNOUNCE_SUB, JSON.stringify(list || []))
   }
 
+  async getLastSeenSignature() {
+    try {
+      return await redis.get(REDIS_ANNOUNCE_LAST_SEEN)
+    } catch {
+      return ''
+    }
+  }
+
+  async setLastSeenSignature(signature) {
+    try {
+      await redis.set(REDIS_ANNOUNCE_LAST_SEEN, String(signature || ''))
+    } catch {
+      // 忽略缓存写入失败，不影响主流程
+    }
+  }
+
   /** 订阅公告（仅群聊）：当前群订阅新公告推送，仅推送订阅时间之后发布的公告 */
   async subscribeGroup() {
     if (!this.e.isGroup) {
@@ -227,12 +244,21 @@ export class announcement extends plugin {
     const d = res.data
     const ts = d.published_at_ts != null ? Number(d.published_at_ts) : 0
     if (ts <= 0) return
+    const itemId = String(d.item_id || '')
+    const signature = `${itemId}:${ts}`
+
+    // 同一条公告只处理一次：不是“新公告”直接跳过（不渲染、不发送）
+    const lastSeen = await this.getLastSeenSignature()
+    if (lastSeen && lastSeen === signature) return
 
     // 先判断是否有群需要推送，避免无意义渲染（一直生成不发送）
     const needPushIndexes = list
       .map((sub, i) => (ts > Number(sub.since_ts ?? 0) ? i : -1))
       .filter((i) => i >= 0)
-    if (needPushIndexes.length === 0) return
+    if (needPushIndexes.length === 0) {
+      await this.setLastSeenSignature(signature)
+      return
+    }
 
     const bot = global.Bot || Bot
     if (!bot?.pickGroup) {
@@ -240,7 +266,6 @@ export class announcement extends plugin {
       return
     }
 
-    const itemId = d.item_id
     let item = { ...d }
     if (itemId && (!getCoverUrl(d) || !getContentText(d))) {
       const detailRes = await req.getAnnouncementsData('announcement_detail', { id: itemId })
@@ -258,6 +283,7 @@ export class announcement extends plugin {
     if (!imgSegment) return
 
     let updated = false
+    let removedInvalid = false
     for (const i of needPushIndexes) {
       const sub = list[i]
       try {
@@ -265,10 +291,21 @@ export class announcement extends plugin {
         list[i] = { ...sub, since_ts: ts }
         updated = true
       } catch (e) {
-        logger.error(`[终末地插件][公告推送] 群 ${sub.group_id} 发送失败: ${e?.message || e}`)
+        const msg = String(e?.message || e || '')
+        logger.error(`[终末地插件][公告推送] 群 ${sub.group_id} 发送失败: ${msg}`)
+        // 群不存在/机器人不在群时，移除订阅避免后续每次新公告都重复失败
+        if (/Unknown Channel/i.test(msg)) {
+          list[i] = null
+          removedInvalid = true
+        }
       }
     }
-    if (updated) await this.setSubList(list)
+    if (updated || removedInvalid) {
+      const next = removedInvalid ? list.filter(Boolean) : list
+      await this.setSubList(next)
+    }
+    // 本轮处理完成后标记已消费该公告，防止同一条公告重复渲染和重复发送
+    await this.setLastSeenSignature(signature)
   }
 
   /** :公告 <序号> — 显示列表中第 N 条公告的详情（优先渲染图片，失败则提示） */

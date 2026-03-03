@@ -127,7 +127,7 @@ gacha:
   current_up_failed: "获取本期 UP 数据失败。"
   current_up_empty: "暂无活跃的 UP 活动。"
   no_accounts: "未找到可用账号，请先绑定角色。"
-  no_records: "暂无抽卡记录，请发送「:抽卡分析同步」进行同步。"
+  no_records: "暂无抽卡记录，已自动开始同步记录，请稍后..."
   records_sync_hint: "同步最新记录请发送「:抽卡分析同步」。"
   analysis_need_sync: "暂无本地数据，请先执行「:抽卡分析同步」。"
   analysis_sync_start: "检测到未同步记录，正在为您自动同步并生成分析，请稍候..."

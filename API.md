@@ -5317,6 +5317,138 @@ X-Framework-Token: your-framework-token
 }
 ```
 
+### 获取帝江号实时外推数据
+
+```http
+GET /api/endfield/spaceship/realtime
+X-Framework-Token: your-framework-token
+```
+
+> **前置条件**：需先调用过 `/api/endfield/spaceship` 至少一次，以生成数据快照。
+
+**Query 参数**（可选）:
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| roleId | string | 否 | 游戏角色 ID |
+| serverId | int | 否 | 服务器 ID，默认 1 |
+
+**功能说明**:
+
+基于上次从森空岛获取的帝江号数据快照，根据经过时间实时外推每个角色的当前心情值。解决帝江号数据仅在玩家登录游戏后才更新的问题。
+
+- **工作房间**（总控中枢=0 / 制造舱=1 / 培养舱=2）：心情按 **12/分钟** 消耗
+- **休息房间**（会客室=3 / 会客室线索=5）：心情按 **20/分钟** 恢复
+- 心情值钳制在 `[0, 10000]`
+- **信赖值暂不外推**（游戏内增长速率未公开），保持快照原始值
+
+**响应说明**:
+
+与 `/api/endfield/spaceship` 返回结构基本一致（`constants`、`relationLevels`、`rooms`、`characterCards`、`charNameMap`、`role`），额外包含：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `snapshotTime` | string (ISO 8601) | 快照获取时间（上次调用 `/spaceship` 的时间） |
+| `calculatedAt` | string (ISO 8601) | 本次计算执行时间 |
+| `elapsedMinutes` | float | 距快照经过的分钟数 |
+
+> 注意：实时外推接口**不包含**原始 `spaceShip` 数据，也不包含 `lastReportTs` 字段。
+
+**响应示例**:
+```json
+{
+  "code": 0,
+  "message": "成功",
+  "data": {
+    "role": {
+      "name": "浅巷墨黎",
+      "roleId": "1320645122",
+      "level": 50,
+      "serverId": 1
+    },
+    "snapshotTime": "2026-03-01T14:30:00+08:00",
+    "calculatedAt": "2026-03-01T15:00:00+08:00",
+    "elapsedMinutes": 30.0,
+    "constants": {
+      "maxPhysicalStrength": 10000,
+      "maxFavorability": 1500,
+      "recoveryPerMinute": 20,
+      "costPerMinute": 12,
+      "recoveryDisplayPerHour": "12%",
+      "costDisplayPerHour": "7.2%"
+    },
+    "relationLevels": [
+      { "level": 1, "name": "友好", "threshold": 0, "need": 300 },
+      { "level": 2, "name": "亲近", "threshold": 300, "need": 1200 },
+      { "level": 3, "name": "信任", "threshold": 1500, "need": 0 }
+    ],
+    "rooms": [
+      {
+        "id": "control_center",
+        "type": 0,
+        "roomName": "总控中枢",
+        "level": 3,
+        "chars": [
+          {
+            "charId": "50515754ef6085bb6a8ddc21ab18a825",
+            "name": "埃特拉",
+            "physicalStrength": 6250.129,
+            "favorability": 1064,
+            "moodPercent": 63,
+            "trustPercent": 163,
+            "trustLevelName": "亲近"
+          }
+        ]
+      },
+      {
+        "id": "room_c_1",
+        "type": 3,
+        "roomName": "会客室",
+        "level": 2,
+        "chars": [
+          {
+            "charId": "c4cf7541c23c93f991e2e464ee18bb18",
+            "name": "佩丽卡",
+            "physicalStrength": 4955.929,
+            "favorability": 1099,
+            "moodPercent": 50,
+            "trustPercent": 166,
+            "trustLevelName": "亲近"
+          }
+        ]
+      }
+    ],
+    "characterCards": [
+      {
+        "name": "埃特拉",
+        "charId": "50515754ef6085bb6a8ddc21ab18a825",
+        "roomId": "control_center",
+        "roomName": "总控中枢",
+        "moodDisplay": "63%",
+        "trustDisplay": "163%",
+        "trustLevelName": "亲近",
+        "physicalStrength": 6250.129,
+        "favorability": 1064,
+        "moodPercent": 63,
+        "trustPercent": 163
+      }
+    ],
+    "charNameMap": {
+      "50515754ef6085bb6a8ddc21ab18a825": "埃特拉",
+      "c4cf7541c23c93f991e2e464ee18bb18": "佩丽卡"
+    }
+  }
+}
+```
+
+**错误响应**:
+
+| 状态码 | 说明 |
+|--------|------|
+| 403 | Framework Token 无效或会话过期 |
+| 404 | 未找到快照数据（需先调用 `/api/endfield/spaceship`） |
+
+---
+
 ### 获取便签信息
 
 ```http
@@ -8139,6 +8271,79 @@ Authorization: Bearer your-access-token
 
 ---
 
+## 前瞻兑换码 API
+
+展示游戏官方发放的前瞻兑换码（如前瞻直播兑换码），供前端展示给用户一键复制使用。
+
+---
+
+### 获取可用兑换码列表
+
+**GET** `/api/endfield/cdkey`
+
+获取所有激活且未过期的前瞻兑换码，按排序权重和创建时间倒序排列。**无需认证**。
+
+**响应示例**
+
+```json
+{
+  "code": 0,
+  "message": "成功",
+  "data": {
+    "list": [
+      {
+        "id": "64f1a2b3c4d5e6f7a8b9c0d1",
+        "code": "ABCD1234EFGH",
+        "title": "2.0前瞻直播兑换码 #1",
+        "rewards": [
+          { "name": "黑键", "amount": 500 },
+          { "name": "合成玉", "amount": 200, "icon": "https://example.com/icon.png" }
+        ],
+        "source": "2.0前瞻直播",
+        "is_active": true,
+        "sort_order": 10,
+        "expires_at": "2026-03-15T23:59:59+08:00",
+        "created_at": "2026-03-01T12:00:00+08:00",
+        "updated_at": "2026-03-01T12:00:00+08:00"
+      }
+    ],
+    "total": 1
+  }
+}
+```
+
+**响应字段**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| list | array | 兑换码列表 |
+| list[].id | string | 兑换码 ID |
+| list[].code | string | 兑换码（大写） |
+| list[].title | string | 标题描述 |
+| list[].rewards | array | 奖励列表，每项含 `name`（名称）、`amount`（数量）、`icon`（图标，可选） |
+| list[].source | string | 来源说明（可选） |
+| list[].is_active | bool | 是否激活 |
+| list[].sort_order | int | 排序权重 |
+| list[].expires_at | string | 过期时间（可选，nil 表示永不过期） |
+| list[].created_at | string | 创建时间 |
+| list[].updated_at | string | 更新时间 |
+| total | int | 列表总数 |
+
+---
+
+### 管理端接口
+
+以下接口为后台管理页面使用，需携带 `X-Admin-Secret` 请求头：
+
+- `POST /api/endfield/cdkey/admin/create` 创建兑换码
+- `GET /api/endfield/cdkey/admin/list` 查询所有兑换码（含非活跃）
+- `PUT /api/endfield/cdkey/admin/update/:id` 更新兑换码
+- `DELETE /api/endfield/cdkey/admin/delete/:id` 删除兑换码
+
+> 这些接口仅用于后台运维，不建议第三方客户端直接接入。
+
+---
+
 ## 友情链接 API
 
 公开友链能力包含：
@@ -8710,6 +8915,26 @@ const callWithAPIKey = async (apiKey, endpoint) => {
 ---
 
 ## 更新日志
+
+### v3.3.0 (2026-03-01)
+
+- ✅ **帝江号实时外推接口**（`/api/endfield/spaceship/realtime`）
+  - 基于上次从森空岛获取的快照数据，根据经过时间实时外推每个角色的心情值
+  - 工作房间（总控中枢/制造舱/培养舱）心情按 12/分钟 消耗
+  - 休息房间（会客室）心情按 20/分钟 恢复
+  - 心情值钳制在 [0, 10000]，信赖值暂不外推（游戏增长速率未公开）
+  - 响应额外包含 `snapshotTime`、`calculatedAt`、`elapsedMinutes` 字段
+  - 需先调用 `/api/endfield/spaceship` 至少一次以生成快照
+
+- ✅ **帝江号快照自动保存**（`/api/endfield/spaceship`）
+  - 每次调用原接口获取数据后，异步保存帝江号数据快照到 MongoDB
+  - 快照按 `role_id` upsert，每个游戏角色只保留一条最新快照
+  - 存储结构化房间/角色数据（房间类型、角色心情/信赖值），供实时外推计算使用
+
+- ✅ **前瞻兑换码系统**（`/api/endfield/cdkey`）
+  - 公开接口返回激活且未过期的兑换码列表，无需认证
+  - 管理端 CRUD 接口通过 `X-Admin-Secret` 鉴权
+  - 兑换码包含奖励列表、来源、排序权重、过期时间
 
 ### v3.2.0 (2026-02-28)
 

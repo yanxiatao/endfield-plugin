@@ -18,7 +18,7 @@ export class EndfieldStamina extends plugin {
       },
       rule: [
         {
-          reg: '^(?:[:：]|[/#](?:zmd|终末地))(理智|体力)$',
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))(理智|体力|荔枝)$',
           fnc: 'getStamina'
         },
         {

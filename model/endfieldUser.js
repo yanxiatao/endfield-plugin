@@ -3,7 +3,7 @@ import EndfieldRequest from './endfieldReq.js'
 // ---------- Redis 绑定存储（原 bindingStorage）：仅允许以下字段（snake_case） ----------
 const ALLOWED_BINDING_KEYS = [
   'framework_token', 'binding_id', 'user_identifier', 'role_id', 'nickname',
-  'server_id', 'is_active', 'is_primary', 'client_type', 'login_type', 'bind_time', 'last_sync'
+  'server_id', 'is_active', 'is_primary', 'client_type', 'login_type', 'bind_time', 'last_sync', 'client_id'
 ]
 
 export const REDIS_KEY = (userId) => `ENDFIELD:USER:${userId}`

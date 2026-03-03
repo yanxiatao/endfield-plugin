@@ -2,3 +2,5 @@ node_modules/
 config/*
 !config/.gitkeep
 data/strategy-img/
+data/**/*.json
+!data/**/.gitkeep
