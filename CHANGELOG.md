@@ -32,6 +32,13 @@
 - **锅巴配置适配**
   - 在锅巴基础配置中新增「启用 Wiki 干员攻略」开关
   - 锅巴保存逻辑支持 `use_wiki_strategy` 写入 `config/common.yaml`
+- **定时任务（cron）配置化**
+  - 新增 `common.push_stamina`、`common.push_announcement` 配置（`enabled + cron`）
+  - `理智订阅推送`、`公告推送` 从固定 cron 改为读取配置，支持在锅巴面板直接调整
+  - 锅巴基础配置新增定时任务分组，支持理智/公告推送开关与 cron 可视化编辑
+- **cron 表达式兼容处理**
+  - 新增 `utils/cron.js` 统一规范化表达式（兼容 5 位/6 位/7 位，支持将 `?` 转 `*`）
+  - 定时任务构建阶段统一使用 `getTaskCron`，非法表达式自动回退默认值并记录日志
 
 ### fix
 - **登录流程日志收敛**
@@ -43,6 +50,10 @@
   - `POST /login/endfield/phone/verify` 支持可选透传 `framework_token`
   - 新增 `GET /login/endfield/cred/verify` 的客户端调用封装
   - 发送验证码接口改为返回结构化数据，异常时统一返回 `null`
+- **定时任务开关与执行边界**
+  - `pushStamina`、`pushNewAnnouncement` 执行前增加 `enabled` 开关判断，关闭时不再轮询与推送
+  - 自动签到任务执行前重新读取 `sign` 配置，非手动触发时 `auto_sign=false` 将直接跳过
+  - `签到任务` cron 改为统一规范化处理，避免不同格式表达式导致的调度异常
 
 ### docs
 - **文档与帮助更新**
@@ -50,7 +61,7 @@
   - `README.md`、`defSet/help.yaml` 增加 Cred 绑定命令说明
   - `defSet/message.yaml` 新增 `enduid.cred_invalid` 提示文案
 
-## [2.0.5] - 2025-03-03
+## [2.0.5] - 2026-03-03
 
 ### feat
 - **抽卡本地缓存**

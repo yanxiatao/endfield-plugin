@@ -7,9 +7,19 @@ import { getCopyright } from '../utils/copyright.js'
 import EndfieldRequest from '../model/endfieldReq.js'
 import setting from '../utils/setting.js'
 import Runtime from '../../../lib/plugins/runtime.js'
+import { normalizeCronExpression } from '../utils/cron.js'
 
 const REDIS_ANNOUNCE_SUB = 'ENDFIELD:ANNOUNCEMENT_SUBSCRIBE'
 const REDIS_ANNOUNCE_LAST_SEEN = 'ENDFIELD:ANNOUNCEMENT_LAST_SEEN'
+
+function getTaskCron(cronExpression, fallback, taskName) {
+  try {
+    return normalizeCronExpression(cronExpression || fallback)
+  } catch (error) {
+    logger.error(`[终末地插件][${taskName}] cron 表达式无效，已回退默认值: ${error?.message || error}`)
+    return normalizeCronExpression(fallback)
+  }
+}
 
 /** 从公告项中取封面图 URL（兼容 images 为字符串数组或对象数组） */
 function getCoverUrl(item) {
@@ -116,6 +126,9 @@ async function renderAnnouncementDetail(e, item) {
 
 export class announcement extends plugin {
   constructor() {
+    const commonConfig = setting.getConfig('common') || {}
+    const pushConfig = commonConfig?.push_announcement || {}
+
     super({
       name: '[endfield-plugin]公告',
       dsc: '终末地官方公告',
@@ -123,7 +136,7 @@ export class announcement extends plugin {
       priority: 50,
       task: {
         name: '[endfield-plugin]公告推送',
-        cron: '*/2 * * * *',
+        cron: getTaskCron(pushConfig.cron, '*/2 * * * *', '公告推送'),
         fnc: () => this.pushNewAnnouncement()
       },
       rule: [
@@ -235,6 +248,9 @@ export class announcement extends plugin {
 
   /** 轮询最新公告，拉取详情后用详情图仅向订阅时间早于该公告的群推送 */
   async pushNewAnnouncement() {
+    const commonConfig = setting.getConfig('common') || {}
+    if (commonConfig?.push_announcement?.enabled === false) return
+
     const req = this.getReq()
     if (!req) return
     const list = await this.getSubList()

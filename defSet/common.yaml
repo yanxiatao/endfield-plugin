@@ -12,3 +12,15 @@ auth_scopes:
 api_key: ""
 # 是否启用 Wiki 干员攻略（关闭后 :攻略 仅查询本地/默认攻略图）
 use_wiki_strategy: true
+# 理智订阅推送任务配置
+push_stamina:
+  # 任务开关
+  enabled: true
+  # 默认每 15 分钟执行一次
+  cron: "*/15 * * * *"
+# 公告订阅推送任务配置
+push_announcement:
+  # 任务开关
+  enabled: true
+  # 默认每 2 分钟轮询一次
+  cron: "*/2 * * * *"

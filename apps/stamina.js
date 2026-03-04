@@ -3,9 +3,22 @@ import EndfieldUser from '../model/endfieldUser.js'
 import { REDIS_KEY } from '../model/endfieldUser.js'
 import setting from '../utils/setting.js'
 import { getCopyright } from '../utils/copyright.js'
+import { normalizeCronExpression } from '../utils/cron.js'
+
+function getTaskCron(cronExpression, fallback, taskName) {
+  try {
+    return normalizeCronExpression(cronExpression || fallback)
+  } catch (error) {
+    logger.error(`[终末地插件][${taskName}] cron 表达式无效，已回退默认值: ${error?.message || error}`)
+    return normalizeCronExpression(fallback)
+  }
+}
 
 export class EndfieldStamina extends plugin {
   constructor() {
+    const commonConfig = setting.getConfig('common') || {}
+    const pushConfig = commonConfig?.push_stamina || {}
+
     super({
       name: '[endfield-plugin]理智',
       dsc: '终末地理智与日常活跃度',
@@ -13,7 +26,7 @@ export class EndfieldStamina extends plugin {
       priority: 50,
       task: {
         name: '[endfield-plugin]理智订阅推送',
-        cron: '*/15 * * * *', // 每 15 分钟
+        cron: getTaskCron(pushConfig.cron, '*/15 * * * *', '理智订阅推送'),
         fnc: () => this.pushStamina()
       },
       rule: [
@@ -253,6 +266,9 @@ export class EndfieldStamina extends plugin {
 
   /** 理智订阅推送：遍历用户所有有效账号，统一阈值，跨过阈值时推送一次 */
   async pushStamina() {
+    const commonConfig = setting.getConfig('common') || {}
+    if (commonConfig?.push_stamina?.enabled === false) return
+
     const list = await this.getStaminaSubList()
     if (!Array.isArray(list) || list.length === 0) return
     for (let i = 0; i < list.length; i++) {

@@ -54,7 +54,25 @@ export function supportGuoba() {
         
         // common：默认读 config（启动时 defSet 会复制到 config），缺项从 defSet 补全
         const commonDefSet = setting.getdefSet('common') || {}
-        const common = lodash.merge({}, commonDefSet, commonConfig)
+        const common = lodash.merge(
+          {
+            auth_client_name: '终末地机器人',
+            auth_client_type: 'bot',
+            auth_scopes: ['user_info', 'binding_info', 'game_data', 'attendance'],
+            api_key: '',
+            use_wiki_strategy: true,
+            push_stamina: {
+              enabled: true,
+              cron: '*/15 * * * *',
+            },
+            push_announcement: {
+              enabled: true,
+              cron: '*/2 * * * *',
+            },
+          },
+          commonDefSet,
+          commonConfig
+        )
         if (Array.isArray(commonConfig.auth_scopes)) common.auth_scopes = commonConfig.auth_scopes
         else if (!Array.isArray(common.auth_scopes)) common.auth_scopes = Array.isArray(commonDefSet.auth_scopes) ? commonDefSet.auth_scopes : []
         
@@ -97,6 +115,10 @@ export function supportGuoba() {
         
         // 将嵌套对象展开为扁平字段名，以匹配 schemas 中的字段名格式
         const result = { ...common }
+        result['push_stamina.enabled'] = common.push_stamina?.enabled !== false
+        result['push_stamina.cron'] = common.push_stamina?.cron || '*/15 * * * *'
+        result['push_announcement.enabled'] = common.push_announcement?.enabled !== false
+        result['push_announcement.cron'] = common.push_announcement?.cron || '*/2 * * * *'
         
         // 展开 sign 配置（notify_list 单独展开 friend/group）
         for (const key in sign) {
@@ -180,6 +202,8 @@ export function supportGuoba() {
               messageData[key] = data[key]
             } else if (commonFields.includes(key)) {
               commonData[key] = data[key]
+            } else if (key.startsWith('push_stamina.') || key.startsWith('push_announcement.')) {
+              lodash.set(commonData, key, data[key])
             } else if (key.startsWith('sign.')) {
               lodash.set(signData, key.replace('sign.', ''), data[key])
             } else if (key.startsWith('gacha.')) {

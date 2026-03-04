@@ -2,9 +2,21 @@ import { getUnbindMessage, getMessage } from '../utils/common.js'
 import EndfieldUser from '../model/endfieldUser.js'
 import setting from '../utils/setting.js'
 import common from '../../../lib/common/common.js'
+import { normalizeCronExpression } from '../utils/cron.js'
+
+function getTaskCron(cronExpression, fallback, taskName) {
+  try {
+    return normalizeCronExpression(cronExpression || fallback)
+  } catch (error) {
+    logger.error(`[终末地插件][${taskName}] cron 表达式无效，已回退默认值: ${error?.message || error}`)
+    return normalizeCronExpression(fallback)
+  }
+}
 
 export class EndfieldAttendance extends plugin {
   constructor() {
+    const signConfig = setting.getConfig('sign') || {}
+
     super({
       name: '[endfield-plugin]签到',
       dsc: '终末地森空岛签到',
@@ -23,10 +35,10 @@ export class EndfieldAttendance extends plugin {
       ]
     })
 
-    this.setting = setting.getConfig('sign')
+    this.setting = signConfig
     this.common_setting = setting.getConfig('common')
     this.task = {
-      cron: this.setting.auto_sign_cron,
+      cron: getTaskCron(this.setting.auto_sign_cron, '0 0 1 * * ?', '森空岛签到任务'),
       name: '终末地森空岛签到任务',
       fnc: () => this.attendance_task()
     }
@@ -132,6 +144,9 @@ export class EndfieldAttendance extends plugin {
   async attendance_task() {
     if (this.e?.msg && !this.e?.isMaster) return false
     const is_manual = !!this?.e?.msg
+    this.setting = setting.getConfig('sign') || {}
+    if (!is_manual && this.setting.auto_sign === false) return true
+
     const keys = await redis.keys('ENDFIELD:USER:*')
     let success_count = 0
     let signed_count = 0
@@ -141,7 +156,6 @@ export class EndfieldAttendance extends plugin {
     logger.mark('[终末地插件][签到任务]签到任务开始')
 
     // 从配置读取通知列表（notify_list），向配置的QQ号发送消息
-    this.setting = setting.getConfig('sign')
     // 手动触发时排除当前用户，避免 sendNotifyList 和 e.reply 重复发送
     const excludeId = is_manual ? String(this.e.user_id) : null
     const startMsg = getMessage('attendance.task_start_broadcast', { count: keys.length })

@@ -61,5 +61,41 @@ export default function getCommonSchemas() {
         unCheckedChildren: '关闭',
       },
     },
+    {
+      component: 'Divider',
+      label: '定时任务',
+    },
+    {
+      field: 'push_stamina.enabled',
+      label: '理智订阅推送开关',
+      bottomHelpMessage: '关闭后将停止定时检查与推送理智订阅',
+      component: 'Switch',
+      componentProps: {
+        checkedChildren: '开启',
+        unCheckedChildren: '关闭',
+      },
+    },
+    {
+      field: 'push_stamina.cron',
+      label: '理智推送检查频率',
+      bottomHelpMessage: '可视化设置定时任务的执行时间，也可以直接编辑cron表达式',
+      component: 'EasyCron',
+    },
+    {
+      field: 'push_announcement.enabled',
+      label: '公告推送开关',
+      bottomHelpMessage: '关闭后将停止轮询并推送新公告',
+      component: 'Switch',
+      componentProps: {
+        checkedChildren: '开启',
+        unCheckedChildren: '关闭',
+      },
+    },
+    {
+      field: 'push_announcement.cron',
+      label: '公告轮询频率',
+      bottomHelpMessage: '可视化设置定时任务的执行时间，也可以直接编辑cron表达式',
+      component: 'EasyCron',
+    },
   ]
 }
