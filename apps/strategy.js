@@ -12,8 +12,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const WIKI_STRATEGY_MAIN_TYPE_ID = '2'
 const WIKI_STRATEGY_SUB_TYPE_ID = '11'
 
-/** 攻略图片本地存储目录：data/strategy-img/名称/ 名称可为干员名（莱万汀）或队伍名（火队、x队） */
-const STRATEGY_IMG_DIR = path.join(__dirname, '..', 'data', 'strategy-img')
+/** 本地上传攻略存储目录：data/strategy-img/名称/ */
+const LOCAL_STRATEGY_IMG_DIR = path.join(__dirname, '..', 'data', 'strategy-img')
+/** 默认攻略存储目录（随仓库分发）：defSet/strategy/名称/ */
+const DEFAULT_STRATEGY_IMG_DIR = path.join(__dirname, '..', 'defSet', 'strategy')
 
 export class EndfieldStrategy extends plugin {
   constructor() {
@@ -47,24 +49,58 @@ export class EndfieldStrategy extends plugin {
     return msg
   }
 
-  /** 攻略列表：本地 data/strategy-img 子目录 + Wiki 干员攻略名称 */
-  async listStrategy() {
-    const localNames = []
-    try {
-      if (fs.existsSync(STRATEGY_IMG_DIR) && fs.statSync(STRATEGY_IMG_DIR).isDirectory()) {
-        const dirs = fs.readdirSync(STRATEGY_IMG_DIR)
-        for (const d of dirs) {
-          const full = path.join(STRATEGY_IMG_DIR, d)
-          if (fs.statSync(full).isDirectory()) localNames.push(d)
-        }
-        localNames.sort((a, b) => a.localeCompare(b))
-      }
-    } catch (e) {
-      logger.error('[终末地攻略] 读取本地攻略目录失败', e)
+  /** 是否启用 Wiki 干员攻略（common.use_wiki_strategy，默认 true） */
+  isWikiStrategyEnabled(commonConfig = {}) {
+    const raw = commonConfig?.use_wiki_strategy
+    if (raw === undefined || raw === null) return true
+    if (typeof raw === 'boolean') return raw
+    if (typeof raw === 'number') return raw !== 0
+    if (typeof raw === 'string') {
+      const v = raw.trim().toLowerCase()
+      if (['false', '0', 'off', 'no', 'n'].includes(v)) return false
+      if (['true', '1', 'on', 'yes', 'y'].includes(v)) return true
     }
+    return !!raw
+  }
+
+  /** 发送本地攻略图片合并转发 */
+  async replyLocalStrategyImages(name, localImages, seg) {
+    if (!Array.isArray(localImages) || localImages.length === 0) return false
+    const parts = []
+    for (const img of localImages) {
+      parts.push(`【作者】${img.author}\n`)
+      if (seg?.image) parts.push(seg.image(`file://${img.path}`))
+    }
+    const forwardMsg = common.makeForwardMsg(this.e, [parts], `${name}攻略`)
+    await this.e.reply(forwardMsg)
+    return true
+  }
+
+  /** 读取指定攻略目录下的子目录名（即可查询名称） */
+  getStrategyNamesByDir(baseDir) {
+    try {
+      if (!fs.existsSync(baseDir) || !fs.statSync(baseDir).isDirectory()) return []
+      const names = []
+      const dirs = fs.readdirSync(baseDir)
+      for (const d of dirs) {
+        const full = path.join(baseDir, d)
+        if (fs.statSync(full).isDirectory()) names.push(d)
+      }
+      return names.sort((a, b) => a.localeCompare(b))
+    } catch (e) {
+      logger.error(`[终末地攻略] 读取目录失败: ${baseDir}`, e)
+      return []
+    }
+  }
+
+  /** 攻略列表：本地(data/strategy-img) + 默认(defSet/strategy) + Wiki 干员攻略名称 */
+  async listStrategy() {
+    const localNames = this.getStrategyNamesByDir(LOCAL_STRATEGY_IMG_DIR)
+    const defaultNames = this.getStrategyNamesByDir(DEFAULT_STRATEGY_IMG_DIR)
     let wikiNames = []
     const commonConfig = setting.getConfig('common') || {}
-    if (commonConfig.api_key && String(commonConfig.api_key).trim()) {
+    const useWikiStrategy = this.isWikiStrategyEnabled(commonConfig)
+    if (useWikiStrategy && commonConfig.api_key && String(commonConfig.api_key).trim()) {
       try {
         const req = new EndfieldRequest(0, '', '')
         const listRes = await req.getWikiData('wiki_items', {
@@ -85,6 +121,9 @@ export class EndfieldStrategy extends plugin {
     const lines = []
     if (localNames.length > 0) {
       lines.push('【本地攻略】\n' + localNames.join('、'))
+    }
+    if (defaultNames.length > 0) {
+      lines.push('【默认攻略】\n' + defaultNames.join('、'))
     }
     if (wikiNames.length > 0) {
       lines.push('【Wiki 干员攻略】\n' + wikiNames.join('、'))
@@ -139,7 +178,7 @@ export class EndfieldStrategy extends plugin {
     }
     const dirName = this.sanitizeName(nameOrTeam)
     const authorName = this.sanitizeName(author)
-    const dir = path.join(STRATEGY_IMG_DIR, dirName)
+    const dir = path.join(LOCAL_STRATEGY_IMG_DIR, dirName)
     try {
       fs.mkdirSync(dir, { recursive: true })
     } catch (err) {
@@ -220,21 +259,30 @@ export class EndfieldStrategy extends plugin {
     return m ? m[1] : base
   }
 
-  /** 获取本地用户上传的攻略图片：data/strategy-img/名称/ 下的图片（名称可为干员名或队伍名如火队），返回 { path, author }[] */
+  /** 获取本地+默认攻略图片：data/strategy-img 与 defSet/strategy 下同名目录图片，返回 { path, author }[] */
   getLocalStrategyImages(nameOrTeam) {
     const dirName = this.sanitizeName(nameOrTeam)
-    const dir = path.join(STRATEGY_IMG_DIR, dirName)
+    const baseDirs = [LOCAL_STRATEGY_IMG_DIR, DEFAULT_STRATEGY_IMG_DIR]
     try {
-      if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return []
-      const files = fs.readdirSync(dir)
       const imageExt = /\.(png|jpe?g|gif|webp)$/i
-      return files
-        .filter((f) => imageExt.test(f))
-        .map((f) => {
+      const images = []
+      for (const baseDir of baseDirs) {
+        const dir = path.join(baseDir, dirName)
+        if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) continue
+        const files = fs.readdirSync(dir)
+        for (const f of files) {
+          if (!imageExt.test(f)) continue
           const fullPath = path.join(dir, f)
-          return { path: fullPath, author: this.getAuthorFromStrategyFilename(f) }
-        })
-        .sort((a, b) => fs.statSync(a.path).mtimeMs - fs.statSync(b.path).mtimeMs)
+          images.push({
+            path: fullPath,
+            author: this.getAuthorFromStrategyFilename(f),
+            mtimeMs: fs.statSync(fullPath).mtimeMs
+          })
+        }
+      }
+      return images
+        .sort((a, b) => a.mtimeMs - b.mtimeMs)
+        .map(({ path, author }) => ({ path, author }))
     } catch (e) {
       return []
     }
@@ -260,11 +308,26 @@ export class EndfieldStrategy extends plugin {
       await this.reply(getMessage('strategy.provide_name', { prefix }))
       return true
     }
-    
+
     const commonConfig = setting.getConfig('common') || {}
+    const useWikiStrategy = this.isWikiStrategyEnabled(commonConfig)
+    const localImages = this.getLocalStrategyImages(name)
+    const seg = global.segment || (await import('oicq')).segment
+
+    if (!useWikiStrategy) {
+      const sent = await this.replyLocalStrategyImages(name, localImages, seg)
+      if (!sent) {
+        await this.reply(getMessage('strategy.not_found', { name }) + '\n' + getMessage('strategy.not_found_suffix'))
+      }
+      return true
+    }
+
     if (!commonConfig.api_key || String(commonConfig.api_key).trim() === '') {
-      await this.reply(getMessage('common.need_api_key'))
-        return true
+      const sent = await this.replyLocalStrategyImages(name, localImages, seg)
+      if (!sent) {
+        await this.reply(getMessage('common.need_api_key'))
+      }
+      return true
     }
 
     const req = new EndfieldRequest(0, '', '')
@@ -284,19 +347,10 @@ export class EndfieldStrategy extends plugin {
 
     const allItems = listRes.data?.items || []
     const items = this.filterItemsByName(allItems, name)
-    const localImages = this.getLocalStrategyImages(name)
-    const seg = global.segment || (await import('oicq')).segment
 
     if (items.length === 0) {
-      if (localImages.length > 0) {
-        const parts = []
-        for (const img of localImages) {
-          parts.push(`【作者】${img.author}\n`)
-          if (seg?.image) parts.push(seg.image(`file://${img.path}`))
-        }
-        const forwardMsg = common.makeForwardMsg(this.e, [parts], `${name}攻略`)
-        await this.e.reply(forwardMsg)
-      } else {
+      const sent = await this.replyLocalStrategyImages(name, localImages, seg)
+      if (!sent) {
         await this.reply(getMessage('strategy.not_found', { name }) + '\n' + getMessage('strategy.not_found_suffix'))
       }
         return true

@@ -145,7 +145,7 @@ export function supportGuoba() {
           
           // 隔离保存：各配置只写入对应文件，不混入其他文件
           // common → config/common.yaml；sign → config/sign.yaml；gacha → config/gacha.yaml；message → config/message.yaml
-          const commonFields = ['auth_client_name', 'auth_client_type', 'auth_scopes', 'api_key']
+          const commonFields = ['auth_client_name', 'auth_client_type', 'auth_scopes', 'api_key', 'use_wiki_strategy']
 
           // message 字段仅写入 config/message.yaml（defSet 中的叶子键，如 gacha.no_records）
           const defSetMessagePath = `${_path}/plugins/endfield-plugin/defSet/message.yaml`

@@ -4,3 +4,4 @@ config/*
 data/strategy-img/
 data/**/*.json
 !data/**/.gitkeep
+apps/strategyUpload.js

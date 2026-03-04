@@ -51,5 +51,15 @@ export default function getCommonSchemas() {
         type: 'password',
       },
     },
+    {
+      field: 'use_wiki_strategy',
+      label: '启用 Wiki 干员攻略',
+      bottomHelpMessage: '关闭后，攻略查询仅使用本地目录（data/strategy-img 与 defSet/strategy）',
+      component: 'Switch',
+      componentProps: {
+        checkedChildren: '开启',
+        unCheckedChildren: '关闭',
+      },
+    },
   ]
 }

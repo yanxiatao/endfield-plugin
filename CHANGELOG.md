@@ -25,6 +25,13 @@
 - **干员列表接口增强**
   - `operator.getOperatorList` 新增 `retImage` 返回模式
   - 支持通过参数覆盖 `frameworkToken/roleId/serverId`，用于多账号场景下按角色渲染
+- **攻略查询来源与开关**
+  - 新增 `common.use_wiki_strategy` 配置项（默认 `true`），用于控制是否启用 Wiki 干员攻略
+  - `:攻略列表` 改为分组展示 `本地攻略(data/strategy-img)`、`默认攻略(defSet/strategy)`、`Wiki 干员攻略`
+  - `:<名称>攻略` 在关闭 Wiki 时仅查询本地/默认攻略图；开启但未配置 `api_key` 时优先回退本地/默认攻略图
+- **锅巴配置适配**
+  - 在锅巴基础配置中新增「启用 Wiki 干员攻略」开关
+  - 锅巴保存逻辑支持 `use_wiki_strategy` 写入 `config/common.yaml`
 
 ### fix
 - **登录流程日志收敛**
