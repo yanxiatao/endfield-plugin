@@ -5,6 +5,44 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循扩展的语义化版本规范（x.y.z 格式）。
 
+## [2.0.6] - 2026-03-04
+
+### feat
+- **Cred 直绑与多角色落库**
+  - 新增 `:绑定 <Cred>` 私聊直绑流程，支持 Cred 校验与登录
+  - 扫码 / 手机 / Cred 登录统一支持基于 `available_roles` 批量创建绑定
+  - 新增登录后多账号干员列表合并转发，支持按角色逐一渲染并集中发送
+
+### changed
+- **绑定数据结构与展示**
+  - 绑定数据写入与同步补充 `channel_name`、`server_name` 字段
+  - `:绑定列表` 服务器展示改为优先读取 `channel_name`
+  - `cred` 登录类型展示文案调整为 `Cred`
+- **手机验证码会话流程**
+  - 发送验证码后缓存 `framework_token` 与动态过期时间（`expire`）
+  - 仅在发送成功后进入 `phoneVerifyCode` 上下文，避免未触发手机登录时误消费 6 位数字消息
+  - `手机绑定` 命令匹配补充 `登录` 别名
+- **干员列表接口增强**
+  - `operator.getOperatorList` 新增 `retImage` 返回模式
+  - 支持通过参数覆盖 `frameworkToken/roleId/serverId`，用于多账号场景下按角色渲染
+
+### fix
+- **登录流程日志收敛**
+  - 移除 Cred / 网页授权 / 手机登录与验证码验证阶段的过程日志
+  - 移除网页授权轮询中的逐次状态日志输出
+- **授权轮询边界修正**
+  - 后台授权状态轮询仅处理 `auth` 类型账号，不再将 `cred` 账号纳入授权轮询检查
+- **统一后端接口兼容**
+  - `POST /login/endfield/phone/verify` 支持可选透传 `framework_token`
+  - 新增 `GET /login/endfield/cred/verify` 的客户端调用封装
+  - 发送验证码接口改为返回结构化数据，异常时统一返回 `null`
+
+### docs
+- **文档与帮助更新**
+  - `API.md` 补充 Cap PoW、登录流程、多角色返回与绑定接口参数说明
+  - `README.md`、`defSet/help.yaml` 增加 Cred 绑定命令说明
+  - `defSet/message.yaml` 新增 `enduid.cred_invalid` 提示文案
+
 ## [2.0.5] - 2025-03-03
 
 ### feat

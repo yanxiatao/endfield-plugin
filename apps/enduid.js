@@ -5,6 +5,7 @@ import setting from '../utils/setting.js'
 import hypergryphAPI from '../model/hypergryphApi.js'
 import { EndfieldOperator } from './operator.js'
 import { getCopyright } from '../utils/copyright.js'
+import common from '../../../lib/common/common.js'
 
 // 网页授权绑定后台轮询任务
 let authPollingTimer = null
@@ -132,7 +133,7 @@ async function checkUserAuthBindings(userId) {
   }
 
   // 2. 检查网页授权类型的远程状态（按 client_id 分组查询）
-  const authAccounts = accounts.filter(acc => acc.login_type === 'auth' || acc.login_type === 'cred')
+  const authAccounts = accounts.filter(acc => acc.login_type === 'auth')
   if (authAccounts.length === 0) return
 
   // 按 client_id 分组查询（支持多个 client_id 的授权）
@@ -212,6 +213,10 @@ export class EndfieldUid extends plugin {
           fnc: 'authBind'
         },
         {
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))(绑定|登陆|登录)(?:\\s+(.+))?$',
+          fnc: 'credBind'
+        },
+        {
           reg: '^(?:[:：]|[/#](?:zmd|终末地))(绑定|登陆|登录)列表$',
           fnc: 'bindList'
         },
@@ -230,10 +235,6 @@ export class EndfieldUid extends plugin {
         {
           reg: '^(?:[:：]|[/#](?:zmd|终末地))手机(绑定|登陆|登录)(\\s*\\d{11})?$',
           fnc: 'phoneBind'
-        },
-        {
-          reg: '^(?:[:：]|[/#](?:zmd|终末地))\\d{6}$',
-          fnc: 'phoneVerifyCode'
         }
       ]
     })
@@ -247,7 +248,7 @@ export class EndfieldUid extends plugin {
    * 注意：同一个 framework_token 可能对应多个 role_id，不能按 token 去重
    */
   async getRemoteAuthorizationAccounts(accounts = []) {
-    const authAccounts = (accounts || []).filter(acc => acc?.login_type === 'auth' || acc?.login_type === 'cred')
+    const authAccounts = (accounts || []).filter(acc => acc?.login_type === 'auth')
     if (authAccounts.length === 0) return null
 
     const userId = String(this.e.user_id)
@@ -275,6 +276,7 @@ export class EndfieldUid extends plugin {
           role_id: roleId,
           nickname: String(bindingInfo.nickname || ''),
           server_id: String(bindingInfo.server_id || 1),
+          channel_name: String(bindingInfo.channel_name || ''),
           is_active: item?.is_active !== false,
           is_primary: false,
           client_type: 'bot',
@@ -339,6 +341,7 @@ export class EndfieldUid extends plugin {
     const roleId = remote.role_id ?? bindingInfo.role_id
     const nickname = remote.nickname ?? bindingInfo.nickname
     const serverId = remote.server_id ?? bindingInfo.server_id
+    const channelName = remote.channel_name ?? bindingInfo.channel_name
     const bindingId = remote.id ?? remote.binding_id
     const isActive = remote.is_active
 
@@ -347,6 +350,7 @@ export class EndfieldUid extends plugin {
       role_id: roleId != null && roleId !== '' ? String(roleId) : localAccount.role_id,
       nickname: nickname != null && nickname !== '' ? String(nickname) : localAccount.nickname,
       server_id: serverId != null && serverId !== '' ? String(serverId) : localAccount.server_id,
+      channel_name: channelName != null && channelName !== '' ? String(channelName) : localAccount.channel_name,
       binding_id: bindingId != null && bindingId !== '' ? bindingId : localAccount.binding_id,
       is_active: isActive === false ? false : localAccount.is_active
     }
@@ -383,6 +387,9 @@ export class EndfieldUid extends plugin {
       role_id: String(bindingData.role_id || ''),
       nickname: bindingData.nickname || '',
       server_id: String(bindingData.server_id || 1),
+      ...(bindingData.channel_name != null && String(bindingData.channel_name).trim() !== ''
+        ? { channel_name: String(bindingData.channel_name).trim() }
+        : {}),
       is_active: true,
       is_primary: true,
       client_type: 'bot',
@@ -431,7 +438,12 @@ export class EndfieldUid extends plugin {
     await saveUserBindings(this.e.user_id, accounts)
     accounts = await this.refreshBindingIdsAfterLogin(accounts)
 
-    await this.reply(getMessage('enduid.login_ok', { nickname: bindingData.nickname, role_id: bindingData.role_id, server_id: bindingData.server_id || 1, count: accounts.length }))
+    await this.reply(getMessage('enduid.login_ok', {
+      nickname: bindingData.nickname,
+      role_id: bindingData.role_id,
+      server_id: bindingData.channel_name || bindingData.server_id || 1,
+      count: accounts.length
+    }))
 
     await saveUserBindings(this.e.user_id, accounts)
     // 绑定成功后自动发送干员列表（静默模式，不发加载提示，失败不影响绑定流程）
@@ -443,6 +455,274 @@ export class EndfieldUid extends plugin {
       logger.error(`[终末地插件][绑定]绑定成功后发送干员列表失败: ${err}`)
     }
     return true
+  }
+
+  normalizeAvailableRoles(roles = []) {
+    if (!Array.isArray(roles)) return []
+    const out = []
+    const seen = new Set()
+
+    for (const role of roles) {
+      const roleId = String(role?.role_id || '').trim()
+      if (!roleId || seen.has(roleId)) continue
+      seen.add(roleId)
+
+      out.push({
+        role_id: roleId,
+        server_id: String(role?.server_id || 1),
+        server_name: String(role?.server_name || ''),
+        nickname: String(role?.nickname || ''),
+        skland_uid: String(role?.skland_uid || ''),
+        channel_name: String(role?.channel_name || ''),
+        level: Number(role?.level ?? 0),
+        is_default: role?.is_default === true
+      })
+    }
+
+    out.sort((a, b) => {
+      if (a.is_default === b.is_default) return 0
+      return a.is_default ? -1 : 1
+    })
+    return out
+  }
+
+  async saveUnifiedBackendBindings(frameworkToken, bindingList = [], loginType = 'unknown', clientId = null) {
+    if (!Array.isArray(bindingList) || bindingList.length === 0) return false
+
+    const existingText = await redis.get(REDIS_KEY(this.e.user_id))
+    let accounts = []
+
+    if (existingText) {
+      try {
+        const existing = JSON.parse(existingText)
+        accounts = Array.isArray(existing) ? existing : [existing]
+      } catch (err) {
+        logger.error(`[终末地插件]解析现有账号失败: ${err}`)
+        accounts = []
+      }
+    }
+
+    const preferredRoleId = String(
+      bindingList.find(item => item?.is_primary)?.role_id
+      || bindingList[0]?.role_id
+      || ''
+    )
+    const nowTs = Date.now()
+
+    for (const item of bindingList) {
+      const roleId = String(item?.role_id || '').trim()
+      if (!roleId) continue
+
+      const newAccount = {
+        framework_token: frameworkToken,
+        binding_id: item.id || item.binding_id || roleId,
+        user_identifier: String(this.e.user_id),
+        role_id: roleId,
+        nickname: item.nickname || '',
+        server_id: String(item.server_id || 1),
+        ...(item.channel_name != null && String(item.channel_name).trim() !== ''
+          ? { channel_name: String(item.channel_name).trim() }
+          : {}),
+        is_active: true,
+        is_primary: preferredRoleId ? roleId === preferredRoleId : false,
+        client_type: 'bot',
+        login_type: loginType,
+        client_id: clientId || String(this.e?.self_id || Bot?.uin || ''),
+        bind_time: nowTs,
+        last_sync: nowTs
+      }
+
+      const existingIndex = accounts.findIndex(acc => String(acc.role_id || '') === roleId)
+      if (existingIndex >= 0) {
+        const prev = accounts[existingIndex]
+        accounts[existingIndex] = {
+          ...prev,
+          ...newAccount,
+          login_type: prev.login_type || newAccount.login_type,
+          is_active: true
+        }
+      } else {
+        accounts.push(newAccount)
+      }
+    }
+
+    if (preferredRoleId) {
+      accounts = accounts.map(acc => ({
+        ...acc,
+        is_primary: String(acc.role_id || '') === preferredRoleId
+      }))
+    }
+
+    accounts = cleanAccounts(accounts)
+    if (accounts.length === 0) return false
+
+    await saveUserBindings(this.e.user_id, accounts)
+    accounts = await this.refreshBindingIdsAfterLogin(accounts)
+
+    const currentBatch = bindingList
+      .map((item) => {
+        const roleId = String(item?.role_id || '')
+        if (!roleId) return null
+        return accounts.find(acc => String(acc?.role_id || '') === roleId) || item
+      })
+      .filter(Boolean)
+
+    const lines = ['[ 登录成功 ]', '──────────────', `本次登录账号 ${currentBatch.length} 个`]
+    currentBatch.forEach((acc, idx) => {
+      lines.push(`${idx + 1}. ${acc.nickname || '未知'} | UID ${acc.role_id || '未知'} | ${acc.channel_name || acc.server_id || '未知服'}`)
+    })
+    lines.push(`已绑定总数 ${accounts.length}`)
+    await this.reply(lines.join('\n'))
+
+    await saveUserBindings(this.e.user_id, accounts)
+    // 多账号登录后按账号生成干员列表，并使用合并转发发送
+    try {
+      await this.sendOperatorListForwardByAccounts(currentBatch, frameworkToken)
+    } catch (err) {
+      logger.error(`[终末地插件][绑定]绑定成功后发送干员列表失败: ${err}`)
+    }
+    return true
+  }
+
+  async sendOperatorListForwardByAccounts(accounts = [], frameworkToken = '') {
+    const targets = (Array.isArray(accounts) ? accounts : [])
+      .filter(acc => acc && acc.role_id)
+      .map(acc => ({
+        role_id: String(acc.role_id || ''),
+        server_id: Number(acc.server_id || 1),
+        nickname: String(acc.nickname || ''),
+        channel_name: String(acc.channel_name || ''),
+        framework_token: String(acc.framework_token || frameworkToken || '')
+      }))
+      .filter(acc => acc.role_id && acc.framework_token)
+
+    if (targets.length === 0) return
+
+    const operatorInstance = new EndfieldOperator()
+    operatorInstance.e = this.e
+    const rendered = []
+    for (const acc of targets) {
+      const img = await operatorInstance.getOperatorList({
+        silent: true,
+        retImage: true,
+        frameworkToken: acc.framework_token,
+        roleId: acc.role_id,
+        serverId: acc.server_id
+      })
+      if (img) rendered.push({ ...acc, img })
+    }
+    if (rendered.length === 0) return
+
+    if (rendered.length === 1) {
+      await this.reply(rendered[0].img)
+      return
+    }
+
+    const forwardParts = rendered.map((item) => [
+      `【${item.nickname || '未知'}】UID ${item.role_id} | ${item.channel_name || item.server_id || '未知服'}`,
+      item.img
+    ])
+    const forwardMsg = common.makeForwardMsg(this.e, forwardParts, '终末地干员列表')
+    await this.e.reply(forwardMsg)
+  }
+
+  async credBind() {
+    if (this.e.isGroup) {
+      await this.reply(getMessage('enduid.please_private'))
+      return true
+    }
+
+    const match = String(this.e.msg || '').match(/^(?:[:：]|[/#](?:zmd|终末地))(?:绑定|登陆|登录)(?:\s+(.+))?$/)
+    const cred = String(match?.[1] || '').trim()
+    if (!cred) {
+      await this.reply('请发送「:绑定 <Cred>」进行登录绑定')
+      return true
+    }
+
+    try {
+      const verifyResult = await hypergryphAPI.unifiedBackendCredVerify(cred)
+      if (verifyResult === false) {
+        await this.reply(getMessage('enduid.cred_invalid'))
+        return true
+      }
+
+      const loginData = await hypergryphAPI.unifiedBackendCredLogin(cred)
+      if (!loginData || !loginData.framework_token) {
+        await this.reply(getMessage('enduid.get_token_failed'))
+        return true
+      }
+
+      const clientId = String(this.e?.self_id || Bot?.uin || '')
+      const userIdentifier = String(this.e.user_id)
+      const availableRoles = this.normalizeAvailableRoles(loginData.available_roles || [])
+
+      // 兼容后端仅返回 endfield_binding 的场景
+      if (availableRoles.length === 0 && loginData.endfield_binding?.role_id) {
+        const fallbackRoles = this.normalizeAvailableRoles([{
+          role_id: loginData.endfield_binding.role_id,
+          server_id: loginData.endfield_binding.server_id,
+          server_name: loginData.endfield_binding.server_name,
+          nickname: loginData.endfield_binding.nickname,
+          skland_uid: loginData.endfield_binding.skland_uid,
+          channel_name: loginData.endfield_binding.channel_name,
+          level: loginData.endfield_binding.level,
+          is_default: true
+        }])
+        availableRoles.push(...fallbackRoles)
+      }
+      const defaultRoleId = String(
+        availableRoles.find(role => role?.is_default)?.role_id
+        || availableRoles[0]?.role_id
+        || ''
+      )
+      const createdBindings = []
+      for (const role of availableRoles) {
+        const isPrimary = defaultRoleId ? String(role.role_id) === defaultRoleId : createdBindings.length === 0
+        const bindingRes = await hypergryphAPI.createUnifiedBackendBinding(
+          loginData.framework_token,
+          userIdentifier,
+          isPrimary,
+          clientId,
+          role
+        )
+        if (!bindingRes) continue
+        createdBindings.push({
+          id: bindingRes.id || bindingRes.binding_id || role.role_id,
+          role_id: String(bindingRes.role_id || role.role_id || ''),
+          nickname: bindingRes.nickname || role.nickname || '',
+          server_id: String(bindingRes.server_id || role.server_id || 1),
+          channel_name: bindingRes.channel_name || role.channel_name || '',
+          is_primary: isPrimary
+        })
+      }
+
+      if (createdBindings.length === 0) {
+        const bindingRes = await hypergryphAPI.createUnifiedBackendBinding(
+          loginData.framework_token,
+          userIdentifier,
+          true,
+          clientId
+        )
+        if (!bindingRes) {
+          await this.reply(getMessage('enduid.bind_create_failed'))
+          return true
+        }
+        await this.saveUnifiedBackendBinding(loginData.framework_token, {
+          ...bindingRes,
+          channel_name: bindingRes.channel_name || ''
+        }, 'cred', clientId)
+      } else {
+        const saved = await this.saveUnifiedBackendBindings(loginData.framework_token, createdBindings, 'cred', clientId)
+        if (!saved) {
+          await this.reply(getMessage('enduid.bind_create_failed'))
+          return true
+        }
+      }
+      return true
+    } catch {
+      await this.reply(getMessage('enduid.auth_error'))
+      return true
+    }
   }
 
   async authBind() {
@@ -492,12 +772,10 @@ export class EndfieldUid extends plugin {
       for (let i = 0; i < maxAttempts; i++) {
         await this.sleep(2000)
         const statusData = await hypergryphAPI.getAuthorizationRequestStatus(requestId)
-        logger.mark(`[终末地插件][授权登陆][轮询 ${i + 1}/${maxAttempts}] 状态: ${statusData?.status || 'null'}`)
         if (!statusData) continue
         if (statusData.status === 'used' || statusData.status === 'approved') {
           if (statusData.framework_token) {
             authData = statusData
-            logger.mark(`[终末地插件][授权登陆]用户已授权，request_id=${requestId}`)
             break
           }
         } else if (statusData.status === 'rejected') {
@@ -516,12 +794,9 @@ export class EndfieldUid extends plugin {
 
       // 直接使用授权响应中的 binding_info，不再调用创建绑定接口
       if (!authData.binding_info || !authData.binding_info.role_id) {
-        logger.error(`[终末地插件][授权登陆]授权响应缺少 binding_info`)
         await this.reply(getMessage('enduid.bind_create_failed'))
         return true
       }
-
-      logger.mark(`[终末地插件][授权登陆]使用授权响应中的游戏数据: ${JSON.stringify(authData.binding_info)}`)
       
       // 构造绑定数据（使用授权响应中的 binding_info）
       const bindingData = {
@@ -529,6 +804,7 @@ export class EndfieldUid extends plugin {
         role_id: authData.binding_info.role_id,
         nickname: authData.binding_info.nickname,
         server_id: authData.binding_info.server_id,
+        channel_name: authData.binding_info.channel_name || '',
         level: authData.binding_info.level
       }
 
@@ -538,8 +814,7 @@ export class EndfieldUid extends plugin {
         try { await this.e.group.recallMsg(authLinkSent.message_id) } catch (e) { /* 撤回失败静默 */ }
       }
       return true
-    } catch (error) {
-      logger.error(`[终末地插件][授权登陆]出错: ${error}`)
+    } catch {
       await this.reply(getMessage('enduid.auth_error'))
       return true
     }
@@ -568,24 +843,27 @@ export class EndfieldUid extends plugin {
       for (let i = 0; i < maxAttempts; i++) {
         await this.sleep(2000)
         const statusData = await hypergryphAPI.getUnifiedBackendQRStatus(frameworkToken)
-        
         if (!statusData) continue
 
-        if (statusData.status === 'done') {
+        const status = String(statusData.status || '').toLowerCase()
+        const stateCode = Number(statusData.code)
+        const isDone = status === 'done'
+          || (stateCode === 0 && status === '' && !!statusData.framework_token)
+        const isExpired = status === 'expired' || stateCode === -2
+        const isFailed = status === 'failed' || stateCode === -3
+
+        if (isDone) {
           loginData = await hypergryphAPI.confirmUnifiedBackendLogin(frameworkToken, String(this.e.user_id))
           if (loginData && loginData.framework_token) {
-            logger.mark(`[终末地插件][统一后端][扫码登录]确认登录成功`)
             break
           }
-        } else if (statusData.status === 'expired') {
-          logger.error(`[终末地插件][统一后端][扫码登录]二维码已过期`)
+        } else if (isExpired) {
           await this.reply(getMessage('enduid.qr_expired'))
           return true
-        } else if (statusData.status === 'failed') {
-          logger.error(`[终末地插件][统一后端][扫码登录]登录失败`)
+        } else if (isFailed) {
           await this.reply(getMessage('enduid.qr_login_failed'))
           return true
-        } else if (statusData.status === 'scanned' || statusData.status === 'authed') {
+        } else if (status === 'pending' || status === 'scanned' || status === 'authed') {
           // 静默等待确认，不发送中间状态消息
         }
       }
@@ -595,27 +873,63 @@ export class EndfieldUid extends plugin {
         return true
       }
 
-      const bindingRes = await hypergryphAPI.createUnifiedBackendBinding(
-        loginData.framework_token,
-        String(this.e.user_id),
-        true,
-        String(this.e.self_id)
+      const clientId = String(this.e?.self_id || Bot?.uin || '')
+      const userIdentifier = String(this.e.user_id)
+      const availableRoles = this.normalizeAvailableRoles(loginData.available_roles || [])
+      const defaultRoleId = String(
+        availableRoles.find(role => role?.is_default)?.role_id
+        || availableRoles[0]?.role_id
+        || ''
       )
+      const createdBindings = []
 
-      if (!bindingRes) {
-        logger.error(`[终末地插件][统一后端]创建绑定失败`)
-        await this.reply(getMessage('enduid.bind_create_failed'))
-        return true
+      for (const role of availableRoles) {
+        const isPrimary = defaultRoleId ? String(role.role_id) === defaultRoleId : createdBindings.length === 0
+        const bindingRes = await hypergryphAPI.createUnifiedBackendBinding(
+          loginData.framework_token,
+          userIdentifier,
+          isPrimary,
+          clientId,
+          role
+        )
+        if (!bindingRes) continue
+        createdBindings.push({
+          id: bindingRes.id || bindingRes.binding_id || role.role_id,
+          role_id: String(bindingRes.role_id || role.role_id || ''),
+          nickname: bindingRes.nickname || role.nickname || '',
+          server_id: String(bindingRes.server_id || role.server_id || 1),
+          channel_name: bindingRes.channel_name || role.channel_name || '',
+          is_primary: isPrimary
+        })
       }
 
-      await this.saveUnifiedBackendBinding(loginData.framework_token, bindingRes, 'qr')
+      // available_roles 为空或批量创建失败时，回退到默认单角色绑定
+      if (createdBindings.length === 0) {
+        const bindingRes = await hypergryphAPI.createUnifiedBackendBinding(
+          loginData.framework_token,
+          userIdentifier,
+          true,
+          clientId
+        )
+        if (!bindingRes) {
+          await this.reply(getMessage('enduid.bind_create_failed'))
+          return true
+        }
+        await this.saveUnifiedBackendBinding(loginData.framework_token, bindingRes, 'qr', clientId)
+      } else {
+        const saved = await this.saveUnifiedBackendBindings(loginData.framework_token, createdBindings, 'qr', clientId)
+        if (!saved) {
+          await this.reply(getMessage('enduid.bind_create_failed'))
+          return true
+        }
+      }
+
       // 群聊时扫码成功后撤回二维码，私聊不管
       if (this.e.isGroup && qrCodeSent?.message_id && this.e.group?.recallMsg) {
         try { await this.e.group.recallMsg(qrCodeSent.message_id) } catch (e) { /* 撤回失败静默 */ }
       }
       return true
     } catch (error) {
-      logger.error(`[终末地插件][统一后端]扫码登陆出错: ${error}`)
       await this.reply(getMessage('enduid.qr_error'))
       return true
     }
@@ -668,12 +982,16 @@ export class EndfieldUid extends plugin {
       }
 
       const primaryRoleId = String((accounts.find(acc => acc?.is_primary) || {}).role_id || '')
+      const localAuth = accounts.filter(acc => acc?.login_type === 'auth')
+      const localCred = accounts
+        .filter(acc => acc?.login_type === 'cred')
+        .map(acc => this.applyRemoteBindingData(acc, bindingMap))
       const localNonAuth = accounts
         .filter(acc => acc?.login_type !== 'auth' && acc?.login_type !== 'cred')
         .map(acc => this.applyRemoteBindingData(acc, bindingMap))
       const merged = remoteAuthAccounts
-        ? [...localNonAuth, ...remoteAuthAccounts]
-        : [...localNonAuth, ...accounts.filter(acc => acc?.login_type === 'auth' || acc?.login_type === 'cred')]
+        ? [...localNonAuth, ...localCred, ...remoteAuthAccounts]
+        : [...localNonAuth, ...localCred, ...localAuth]
 
       accounts = cleanAccounts(merged)
       if (accounts.length > 0) {
@@ -695,12 +1013,11 @@ export class EndfieldUid extends plugin {
       logger.warn(`[终末地插件][绑定列表]远程绑定列表同步失败，使用本地缓存: ${err?.message || err}`)
     }
 
-    const loginTypeLabel = { qr: '扫码', phone: '手机号', auth: '网页授权', cred: '网页授权' }
-    const serverLabel = (serverId) => {
-      const id = Number(serverId)
-      if (id === 1) return '官服'
-      if (id === 2) return 'B服'
-      return serverId ? `ID=${serverId}` : '未知'
+    const loginTypeLabel = { qr: '扫码', phone: '手机号', auth: '网页授权', cred: 'Cred' }
+    const serverLabel = (acc = {}) => {
+      const channelName = String(acc?.channel_name || '').trim()
+      if (channelName) return channelName
+      return '未知'
     }
 
     // 并行获取每个绑定的游戏数据（头像、等级），用索引作为 key 避免 role_id 类型不一致导致互相覆盖
@@ -740,7 +1057,7 @@ export class EndfieldUid extends plugin {
         index: index + 1,
         nickname: finalName,
         role_id: acc.role_id || '未知',
-        server_label: serverLabel(acc.server_id),
+        server_label: serverLabel(acc),
         type_label: typeLabel,
         created_at: bindTime,
         isPrimary: !!acc.is_primary,
@@ -965,7 +1282,7 @@ export class EndfieldUid extends plugin {
       return true
     }
 
-    const phoneMatch = this.e.msg.match(/手机(?:绑定|登陆)\s*(\d{11})/)
+    const phoneMatch = this.e.msg.match(/手机(?:绑定|登陆|登录)\s*(\d{11})/)
     const phone = phoneMatch ? phoneMatch[1] : null
 
     if (!phone) {
@@ -978,81 +1295,155 @@ export class EndfieldUid extends plugin {
   }
 
   async sendPhoneCodeAndWait(phone) {
-    const sendResult = await hypergryphAPI.unifiedBackendSendPhoneCode(phone)
-    if (!sendResult) {
+    const mask = `${phone.substring(0, 3)}****${phone.substring(7)}`
+
+    const sendData = await hypergryphAPI.unifiedBackendSendPhoneCode(phone)
+    if (!sendData) {
       await this.reply(getMessage('enduid.phone_send_failed'))
       return
     }
 
-    const cacheData = { phone, timestamp: Date.now() }
-    await redis.set(`ENDFIELD:PHONE_BIND:${this.e.user_id}`, JSON.stringify(cacheData), { EX: 300 })
+    const expireSec = Math.max(60, Math.min(1800, Number(sendData.expire) || 300))
+    const sendFrameworkToken = String(sendData.framework_token || '').trim()
+    const cacheData = {
+      phone,
+      timestamp: Date.now(),
+      framework_token: sendFrameworkToken
+    }
+    await redis.set(`ENDFIELD:PHONE_BIND:${this.e.user_id}`, JSON.stringify(cacheData), { EX: expireSec })
+    // 仅在「已发送验证码」后进入验证码会话态，避免任意 6 位数字触发处理
+    this.finish('phoneVerifyCode')
+    this.setContext('phoneVerifyCode', false, expireSec, getMessage('enduid.phone_code_expired'))
 
     const prefix = this.getCmdPrefix()
-    const mask = `${phone.substring(0, 3)}****${phone.substring(7)}`
     await this.reply(getMessage('enduid.phone_code_sent', { mask, prefix }))
   }
 
   async phoneVerifyCode() {
-    if (this.e.isGroup) return false
+    if (this.e.isGroup) return 'continue'
 
-    // 仅当该用户存在待验证状态（发送过手机验证后）才将本条 6 位数字当作验证码处理，否则不消费消息
+    // 仅当该用户存在待验证状态（发送过手机验证后）才将本条 6 位数字当作验证码处理
     const cacheText = await redis.get(`ENDFIELD:PHONE_BIND:${this.e.user_id}`)
-    if (!cacheText) return false
+    if (!cacheText) {
+      this.finish('phoneVerifyCode')
+      return 'continue'
+    }
 
     const raw = (this.e.msg || '').replace(/^(?:[:：]|[/#](?:zmd|终末地))\s*/i, '').trim()
     const code = /^\d{6}$/.test(raw) ? raw : null
-    if (!code) return false
+    if (!code) return 'continue'
 
     let cache
     try {
       cache = JSON.parse(cacheText)
-    } catch (e) {
+    } catch {
       await this.reply(getMessage('enduid.phone_cache_error'))
+      this.finish('phoneVerifyCode')
       return true
     }
 
     if (!cache || !cache.phone) {
       await this.reply(getMessage('enduid.phone_code_expired'))
+      this.finish('phoneVerifyCode')
       return true
     }
 
     if (Date.now() - cache.timestamp > 5 * 60 * 1000) {
       await redis.del(`ENDFIELD:PHONE_BIND:${this.e.user_id}`)
       await this.reply(getMessage('enduid.phone_code_expired'))
+      this.finish('phoneVerifyCode')
       return true
     }
 
     const phone = cache.phone
+    const cacheFrameworkToken = String(cache.framework_token || '').trim()
 
     try {
-      const loginData = await hypergryphAPI.unifiedBackendPhoneLogin(phone, code)
+      const loginData = await hypergryphAPI.unifiedBackendPhoneLogin(phone, code, cacheFrameworkToken)
       if (!loginData || !loginData.framework_token) {
         await this.reply(getMessage('enduid.phone_code_wrong'))
         await redis.del(`ENDFIELD:PHONE_BIND:${this.e.user_id}`)
+        this.finish('phoneVerifyCode')
         return true
       }
 
-      const bindingRes = await hypergryphAPI.createUnifiedBackendBinding(
-        loginData.framework_token,
-        String(this.e.user_id),
-        true,
-        String(this.e.self_id)
+      const clientId = String(this.e?.self_id || Bot?.uin || '')
+      const userIdentifier = String(this.e.user_id)
+      const availableRoles = this.normalizeAvailableRoles(loginData.available_roles || [])
+
+      // 兼容后端仅返回 endfield_binding 的场景
+      if (availableRoles.length === 0 && loginData.endfield_binding?.role_id) {
+        const fallbackRoles = this.normalizeAvailableRoles([{
+          role_id: loginData.endfield_binding.role_id,
+          server_id: loginData.endfield_binding.server_id,
+          server_name: loginData.endfield_binding.server_name,
+          nickname: loginData.endfield_binding.nickname,
+          skland_uid: loginData.endfield_binding.skland_uid,
+          channel_name: loginData.endfield_binding.channel_name,
+          level: loginData.endfield_binding.level,
+          is_default: true
+        }])
+        availableRoles.push(...fallbackRoles)
+      }
+
+      const defaultRoleId = String(
+        availableRoles.find(role => role?.is_default)?.role_id
+        || availableRoles[0]?.role_id
+        || ''
       )
+      const createdBindings = []
 
-      if (!bindingRes) {
-        logger.error(`[终末地插件][统一后端]创建绑定失败`)
-        await this.reply(getMessage('enduid.bind_create_failed'))
-        await redis.del(`ENDFIELD:PHONE_BIND:${this.e.user_id}`)
-        return true
+      for (const role of availableRoles) {
+        const isPrimary = defaultRoleId ? String(role.role_id) === defaultRoleId : createdBindings.length === 0
+        const bindingRes = await hypergryphAPI.createUnifiedBackendBinding(
+          loginData.framework_token,
+          userIdentifier,
+          isPrimary,
+          clientId,
+          role
+        )
+        if (!bindingRes) continue
+        createdBindings.push({
+          id: bindingRes.id || bindingRes.binding_id || role.role_id,
+          role_id: String(bindingRes.role_id || role.role_id || ''),
+          nickname: bindingRes.nickname || role.nickname || '',
+          server_id: String(bindingRes.server_id || role.server_id || 1),
+          channel_name: bindingRes.channel_name || role.channel_name || '',
+          is_primary: isPrimary
+        })
       }
 
-      await this.saveUnifiedBackendBinding(loginData.framework_token, bindingRes, 'phone')
+      if (createdBindings.length === 0) {
+        const bindingRes = await hypergryphAPI.createUnifiedBackendBinding(
+          loginData.framework_token,
+          userIdentifier,
+          true,
+          clientId
+        )
+        if (!bindingRes) {
+          await this.reply(getMessage('enduid.bind_create_failed'))
+          await redis.del(`ENDFIELD:PHONE_BIND:${this.e.user_id}`)
+          this.finish('phoneVerifyCode')
+          return true
+        }
+        await this.saveUnifiedBackendBinding(loginData.framework_token, bindingRes, 'phone', clientId)
+      } else {
+        const saved = await this.saveUnifiedBackendBindings(loginData.framework_token, createdBindings, 'phone', clientId)
+        if (!saved) {
+          await this.reply(getMessage('enduid.bind_create_failed'))
+          await redis.del(`ENDFIELD:PHONE_BIND:${this.e.user_id}`)
+          this.finish('phoneVerifyCode')
+          return true
+        }
+      }
+
       await redis.del(`ENDFIELD:PHONE_BIND:${this.e.user_id}`)
+      this.finish('phoneVerifyCode')
       return true
-    } catch (error) {
-      logger.error(`[终末地插件][手机登陆]登陆过程出错: ${error}`)
+    } catch {
       await this.reply(getMessage('enduid.phone_login_error'))
       await redis.del(`ENDFIELD:PHONE_BIND:${this.e.user_id}`)
+      this.finish('phoneVerifyCode')
       return true
     }
   }

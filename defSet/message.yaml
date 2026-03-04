@@ -249,6 +249,7 @@ enduid:
   phone_code_wrong: "验证码错误或已失效。"
   phone_login_error: "手机登录过程出现异常。"
   get_token_failed: "Token 获取失败。"
+  cred_invalid: "Cred 无效或已过期，请重新获取后再试。"
 
 strategy:
   provide_name: "请指定攻略名称，示例 :黎风攻略"

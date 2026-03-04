@@ -99,6 +99,7 @@ let hypergryphAPI = {
         return null
       }
 
+      logger.info(`[终末地插件][统一后端][确认登录]响应数据: ${JSON.stringify(res.data || {})}`)
       return res.data
     } catch (error) {
       logger.error(`[终末地插件][统一后端][确认登录]请求异常: ${error.toString()}`)
@@ -106,15 +107,19 @@ let hypergryphAPI = {
     }
   },
 
-  async unifiedBackendPhoneLogin(phone, code) {
+  async unifiedBackendPhoneLogin(phone, code, frameworkToken = '') {
     const config = getUnifiedBackendConfig()
 
     try {
+      const body = { phone, code }
+      if (frameworkToken && String(frameworkToken).trim() !== '') {
+        body.framework_token = String(frameworkToken).trim()
+      }
       const response = await fetch(`${config.baseUrl}/login/endfield/phone/verify`, {
         timeout: 25000,
         method: 'post',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, code })
+        body: JSON.stringify(body)
       })
 
       if (!response.ok) {
@@ -148,20 +153,20 @@ let hypergryphAPI = {
 
       if (!response.ok) {
         logger.error(`[终末地插件][统一后端][发送验证码]${response.status} ${response.statusText}`)
-        return false
+        return null
       }
 
       const res = await response.json()
       if (res?.code !== 0) {
         logger.error(`[终末地插件][统一后端][发送验证码]${JSON.stringify(res)}`)
-        return false
+        return null
       }
 
       logger.mark(`[终末地插件][统一后端][发送验证码]验证码发送成功`)
-      return true
+      return res.data || {}
     } catch (error) {
       logger.error(`[终末地插件][统一后端][发送验证码]${error.toString()}`)
-      return false
+      return null
     }
   },
 
@@ -194,11 +199,73 @@ let hypergryphAPI = {
     }
   },
 
-  async createUnifiedBackendBinding(frameworkToken, userIdentifier, isPrimary = true, clientId = '') {
+  /**
+   * 验证 Cred 是否有效（接口异常时返回 null，不阻断后续登录流程）
+   * GET /login/endfield/cred/verify?cred=xxx
+   * @returns {boolean|null} true=有效，false=无效，null=接口异常/不可用
+   */
+  async unifiedBackendCredVerify(cred) {
+    const config = getUnifiedBackendConfig()
+    const query = encodeURIComponent(String(cred || ''))
+
+    try {
+      const response = await fetch(`${config.baseUrl}/login/endfield/cred/verify?cred=${query}`, {
+        timeout: 12000,
+        method: 'get'
+      })
+
+      if (!response.ok) {
+        logger.warn(`[终末地插件][统一后端][Cred校验]${response.status} ${response.statusText}`)
+        return null
+      }
+
+      const res = await response.json()
+      if (res?.code !== 0) {
+        logger.warn(`[终末地插件][统一后端][Cred校验]${JSON.stringify(res)}`)
+        return false
+      }
+
+      const data = res?.data
+      if (typeof data?.valid === 'boolean') return data.valid
+      if (typeof data?.is_valid === 'boolean') return data.is_valid
+      return true
+    } catch (error) {
+      logger.warn(`[终末地插件][统一后端][Cred校验]${error.toString()}`)
+      return null
+    }
+  },
+
+  async createUnifiedBackendBinding(frameworkToken, userIdentifier, isPrimary = true, clientId = '', bindingInfo = null) {
     const config = getUnifiedBackendConfig()
     const headers = {
       'Content-Type': 'application/json',
       ...(config.apiKey ? { 'X-API-Key': config.apiKey } : {})
+    }
+    const body = {
+      framework_token: frameworkToken,
+      user_identifier: userIdentifier,
+      client_type: 'bot',
+      client_id: clientId || `bot-${userIdentifier}`,
+      is_primary: isPrimary
+    }
+
+    // 新版接口支持创建绑定时显式指定角色信息（role_id/server_id/...）
+    if (bindingInfo && typeof bindingInfo === 'object') {
+      const roleId = bindingInfo.role_id
+      const serverId = bindingInfo.server_id
+      const serverName = bindingInfo.server_name
+      const nickname = bindingInfo.nickname
+      const sklandUid = bindingInfo.skland_uid
+      const channelName = bindingInfo.channel_name
+      const level = bindingInfo.level
+
+      if (roleId != null && String(roleId).trim() !== '') body.role_id = String(roleId).trim()
+      if (serverId != null && String(serverId).trim() !== '') body.server_id = String(serverId).trim()
+      if (serverName != null && String(serverName).trim() !== '') body.server_name = String(serverName).trim()
+      if (nickname != null && String(nickname).trim() !== '') body.nickname = String(nickname).trim()
+      if (sklandUid != null && String(sklandUid).trim() !== '') body.skland_uid = String(sklandUid).trim()
+      if (channelName != null && String(channelName).trim() !== '') body.channel_name = String(channelName).trim()
+      if (Number.isFinite(Number(level))) body.level = Number(level)
     }
 
     try {
@@ -206,13 +273,7 @@ let hypergryphAPI = {
         timeout: 25000,
         method: 'post',
         headers,
-        body: JSON.stringify({
-          framework_token: frameworkToken,
-          user_identifier: userIdentifier,
-          client_type: 'bot',
-          client_id: clientId || `bot-${userIdentifier}`,
-          is_primary: isPrimary
-        })
+        body: JSON.stringify(body)
       })
 
       if (!response.ok) {

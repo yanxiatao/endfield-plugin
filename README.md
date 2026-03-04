@@ -14,7 +14,7 @@
 
 - 一个适用于 [Yunzai 系列机器人框架](https://github.com/yhArcadia/Yunzai-Bot-plugins-index) 的明日方舟：终末地游戏数据查询插件
 
-- 支持网页授权 / 扫码 / 手机号 绑定，支持便签、干员面板、Wiki、攻略、帝江号与地区建设等查询
+- 支持 Cred / 网页授权 / 扫码 / 手机号 绑定，支持便签、干员面板、Wiki、攻略、帝江号与地区建设等查询
 
 > [!TIP]
 > 终末地-协议终端交流群，欢迎加入 [160759479](https://qm.qq.com/q/zZXruW6V4Q) 交流反馈。
@@ -56,7 +56,7 @@ git clone https://github.com/Entropy-Increase-Team/endfield-plugin ./plugins/end
 
 | 命令 | 说明 |
 |------|------|
-| `:绑定` | 私聊发送 cred 绑定（前缀同上） |
+| `:绑定 <Cred>` | 私聊发送 Cred 直接绑定（前缀同上） |
 | `:授权登陆` | 网页授权登陆（需先去网站绑定） |
 | `:扫码绑定` | 森空岛 App 扫码绑定 |
 | `:手机绑定 [手机号]` | 手机验证码绑定（私聊） |
@@ -186,4 +186,3 @@ git clone https://github.com/Entropy-Increase-Team/endfield-plugin ./plugins/end
 有你们的贡献，endfield-plugin 才能变得越来越好~ ❤️
 
 如果你喜欢这个项目，请不妨点个 Star🌟，这是对开发者最大的动力。
-

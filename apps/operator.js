@@ -545,18 +545,22 @@ export class EndfieldOperator extends plugin {
 
     if (!(await sklUser.getUser())) {
       if (!options.silent) await this.reply(getUnbindMessage())
-      return true
+      return options.retImage ? null : true
     }
 
     if (!options.silent) await this.reply(getMessage('operator.loading_list'))
 
     try {
+      if (options.frameworkToken && sklUser.sklReq) {
+        sklUser.framework_token = String(options.frameworkToken)
+        sklUser.sklReq.setFrameworkToken(String(options.frameworkToken))
+      }
       // 1) 触发面板同步（异步任务）
       const syncRes = await sklUser.sklReq.getData('panel_sync')
       if (!syncRes || syncRes.code !== 0) {
         const msg = syncRes?.message || '触发同步失败'
-        await this.reply(getMessage('common.query_failed', { error: msg }))
-        return true
+        if (!options.silent) await this.reply(getMessage('common.query_failed', { error: msg }))
+        return options.retImage ? null : true
       }
 
       // 2) 轮询同步状态
@@ -578,13 +582,13 @@ export class EndfieldOperator extends plugin {
         }
         if (status === 'failed') {
           const errMsg = statusRes?.message || '同步失败'
-          await this.reply(getMessage('common.query_failed', { error: errMsg }))
-          return true
+          if (!options.silent) await this.reply(getMessage('common.query_failed', { error: errMsg }))
+          return options.retImage ? null : true
         }
       }
       if (!completed) {
-        await this.reply(getMessage('operator.list_failed'))
-        return true
+        if (!options.silent) await this.reply(getMessage('operator.list_failed'))
+        return options.retImage ? null : true
       }
 
       // 3) 拉取已同步角色列表（分页）
@@ -596,8 +600,8 @@ export class EndfieldOperator extends plugin {
         const listRes = await sklUser.sklReq.getData('panel_chars', { page, page_size: pageSize })
         if (!listRes || listRes.code !== 0) {
           const msg = listRes?.message || '获取同步角色列表失败'
-          await this.reply(getMessage('common.query_failed', { error: msg }))
-          return true
+          if (!options.silent) await this.reply(getMessage('common.query_failed', { error: msg }))
+          return options.retImage ? null : true
         }
         const data = listRes.data || {}
         const rows = Array.isArray(data.synced_chars) ? data.synced_chars : []
@@ -608,8 +612,8 @@ export class EndfieldOperator extends plugin {
       }
 
       // 4) 获取全量干员列表，使用同步角色覆盖展示数据
-      const roleId = String(sklUser.endfield_uid || '')
-      const serverId = Number(sklUser.server_id || 1)
+      const roleId = String(options.roleId || sklUser.endfield_uid || '')
+      const serverId = Number(options.serverId || sklUser.server_id || 1)
       const [res, friendDetailRes] = await Promise.all([
         sklUser.sklReq.getData('endfield_card_detail', { roleId, serverId }),
         sklUser.sklReq.getData('friend_detail').catch(() => false)
@@ -617,16 +621,16 @@ export class EndfieldOperator extends plugin {
 
       if (!res || res.code !== 0) {
         logger.error(`[终末地干员列表]card/detail 失败: ${JSON.stringify(res)}`)
-        await this.reply(getMessage('common.get_role_failed'))
-        return true
+        if (!options.silent) await this.reply(getMessage('common.get_role_failed'))
+        return options.retImage ? null : true
       }
       const detail = res.data?.detail || {}
       const base = detail.base || {}
       const chars = detail.chars || []
 
       if (!chars.length) {
-        await this.reply(getMessage('operator.not_found_info'))
-        return true
+        if (!options.silent) await this.reply(getMessage('operator.not_found_info'))
+        return options.retImage ? null : true
       }
 
       // 兼容历史 friend_detail 展示标记
@@ -744,23 +748,25 @@ export class EndfieldOperator extends plugin {
       }
 
       if (!this.e.runtime?.render) {
-        await this.reply(getMessage('operator.list_failed'))
-        return true
+        if (!options.silent) await this.reply(getMessage('operator.list_failed'))
+        return options.retImage ? null : true
       }
       const img = await this.e.runtime.render('endfield-plugin', 'operator/list', tplData, {
         retType: 'base64',
         viewport: { width: viewportWidth }
       })
       if (img) {
+        if (options.retImage) return img
         await this.e.reply(img)
       } else {
-        await this.reply(getMessage('operator.list_failed'))
+        if (!options.silent) await this.reply(getMessage('operator.list_failed'))
+        return options.retImage ? null : true
       }
-      return true
+      return options.retImage ? img : true
     } catch (error) {
       logger.error(`[终末地面板同步]查询失败: ${error}`)
-      await this.reply(getMessage('common.query_failed', { error: error.message }))
-      return true
+      if (!options.silent) await this.reply(getMessage('common.query_failed', { error: error.message }))
+      return options.retImage ? null : true
     }
   }
 

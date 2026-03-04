@@ -10,7 +10,7 @@ help_group:
   - type: tips
     items:
       - title: "多账号说明"
-        text: "支持多账号，请使用「:扫码绑定」「:手机绑定」「:授权绑定」完成绑定"
+        text: "支持多账号，请使用「:绑定 <Cred>」「:扫码绑定」「:手机绑定」「:授权绑定」完成绑定"
       - title: "切换账号"
         text: "可通过「:切换绑定 <序号>」切换当前激活账号"
       - title: "命令前缀"
@@ -25,6 +25,9 @@ help_group:
       - icon: 26
         title: ":maa 教程"
         desc: "MaaEnd 远程控制图文教程"
+      - icon: 3
+        title: ":绑定 <Cred> / 登陆 <Cred>"
+        desc: "使用 Cred 直接绑定（仅私聊）"
       - icon: 3
         title: ":授权绑定 / 授权登陆"
         desc: "网页授权绑定（需先在官网完成授权）"
