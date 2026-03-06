@@ -176,6 +176,12 @@ git clone https://github.com/Entropy-Increase-Team/endfield-plugin ./plugins/end
 ## 其他框架
 
 - **云崽**：[endfield-plugin](https://github.com/Entropy-Increase-Team/endfield-plugin)
+- **Astrbot**：[astrbot_plugin_endfield](https://github.com/Entropy-Increase-Team/astrbot_plugin_endfield)
+- **Nonebot2**：[nonebot-plugin-endfield](https://github.com/Entropy-Increase-Team/nonebot-plugin-endfield)
+
+## 开源协议
+
+本项目采用 [GNU Affero General Public License v3.0](LICENSE) 开源协议。
 
 ## 💖 感谢贡献者
 
