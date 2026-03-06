@@ -124,6 +124,8 @@ html, body {
   border-radius: 8px;
   display: block;
   background: #f3f4f6;
+  /* 优化缩略图在放大情况下的渲染质量 */
+  image-rendering: -webkit-optimize-contrast;
 }
 
 /* 页脚：与 help 统一版式（居中、上边框、留白） */
