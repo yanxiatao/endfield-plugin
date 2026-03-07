@@ -142,13 +142,17 @@ export class EndfieldGacha extends plugin {
     }
   }
 
-  async refreshLocalGachaCacheFromCloud(token, userId, roleId) {
+  async refreshLocalGachaCacheFromCloud(token, userId, roleId, serverId = '1') {
     // 后端 completed 后可能存在短暂可见性延迟，这里做小次数重试，确保 records 能落本地
+    const query = {
+      role_id: String(roleId || ''),
+      server_id: String(serverId || '1')
+    }
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         const [statsData, ...poolDataList] = await Promise.all([
-          hypergryphAPI.getGachaStats(token),
-          ...GACHA_POOLS.map((pool) => hypergryphAPI.getGachaRecordsAllPages(token, { pools: pool, limit: 500 }))
+          hypergryphAPI.getGachaStats(token, query),
+          ...GACHA_POOLS.map((pool) => hypergryphAPI.getGachaRecordsAllPages(token, { pools: pool, limit: 500, ...query }))
         ])
         if (!statsData) {
           if (attempt < 3) {
@@ -199,7 +203,121 @@ export class EndfieldGacha extends plugin {
     return String(sid || 1)
   }
 
-  async getCurrentUpFromBiliWiki() {
+  getAccountRoleId(account) {
+    const rid = account?.role_id ?? account?.roleId ?? account?.game_uid ?? account?.gameUid ?? ''
+    return String(rid || '')
+  }
+
+  getBannerInfoSource() {
+    const gachaCfg = setting.getConfig('gacha') || {}
+    const source = String(gachaCfg.banner_info?.source || 'backend_api').trim().toLowerCase()
+    return source === 'local_file' ? 'local_file' : 'backend_api'
+  }
+
+  parseBannerTime(input) {
+    if (input == null) return 0
+    if (typeof input === 'number' && Number.isFinite(input)) {
+      // 兼容秒级时间戳
+      return input < 10000000000 ? input * 1000 : input
+    }
+    const raw = String(input || '').trim()
+    if (!raw) return 0
+
+    // 优先手动解析，避免 "03.29 12:00" 被 Date 误判为 2001 年
+    const withYear = raw.match(/^(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})(?:\s+(\d{1,2}):(\d{1,2}))?$/)
+    if (withYear) {
+      const year = Number(withYear[1])
+      const month = Number(withYear[2])
+      const day = Number(withYear[3])
+      const hour = Number(withYear[4] ?? 0)
+      const minute = Number(withYear[5] ?? 0)
+      if (month >= 1 && month <= 12 && day >= 1 && day <= 31 && hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+        const ts = new Date(year, month - 1, day, hour, minute, 0, 0).getTime()
+        if (Number.isFinite(ts)) return ts
+      }
+      return 0
+    }
+
+    // 兼容本地 game_banners.yaml 的 "03.29 12:00" / "3-29 12:00" 格式（无年份）
+    const m = raw.match(/^(\d{1,2})[.\-/](\d{1,2})(?:\s+(\d{1,2}):(\d{1,2}))?$/)
+    if (m) {
+      const month = Number(m[1])
+      const day = Number(m[2])
+      const hour = Number(m[3] ?? 0)
+      const minute = Number(m[4] ?? 0)
+      if (!Number.isFinite(month) || !Number.isFinite(day)) return 0
+      if (month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59) return 0
+
+      const now = new Date()
+      const y = now.getFullYear()
+      const candidates = [y - 1, y, y + 1]
+        .map((year) => new Date(year, month - 1, day, hour, minute, 0, 0).getTime())
+        .filter((t) => Number.isFinite(t))
+      if (candidates.length === 0) return 0
+      return candidates.reduce((best, cur) => {
+        if (best == null) return cur
+        return Math.abs(cur - now.getTime()) < Math.abs(best - now.getTime()) ? cur : best
+      }, null) || 0
+    }
+
+    const normalized = raw.replace(/\//g, '-')
+    const directTs = new Date(normalized).getTime()
+    return Number.isFinite(directTs) ? directTs : 0
+  }
+
+  normalizePoolName(name) {
+    const n = String(name || '').trim()
+    if (!n) return ''
+    const idx = n.indexOf('·')
+    return idx !== -1 ? n.slice(idx + 1).trim() : n
+  }
+
+  parseBiliWikiUpResult(listRaw) {
+    const list = Array.isArray(listRaw) ? listRaw : []
+    const activeOnly = list.filter((a) => a?.is_active === true)
+    let upCharNames = []
+    let upWeaponName = ''
+    let activeCharPoolName = ''
+    let activeWeaponPoolName = ''
+
+    const charActivity = activeOnly.find((a) => (a?.type || '') === '特许寻访')
+    if (charActivity?.up && String(charActivity.up).trim()) {
+      const upStr = String(charActivity.up).trim()
+      upCharNames = [upStr]
+    }
+    activeCharPoolName = this.normalizePoolName(charActivity?.name)
+
+    const weaponActivity = activeOnly.find((a) => (a?.type || '') === '武库申领')
+    if (weaponActivity?.up && String(weaponActivity.up).trim()) {
+      upWeaponName = String(weaponActivity.up).trim()
+      activeWeaponPoolName = upWeaponName
+    } else {
+      activeWeaponPoolName = this.normalizePoolName(weaponActivity?.name)
+    }
+
+    const poolUpMap = {}
+    for (const a of list) {
+      if (!a?.name || !a?.up) continue
+      const pName = this.normalizePoolName(a.name)
+      const upStr = String(a.up).trim()
+      if (pName && upStr) poolUpMap[pName] = upStr
+    }
+
+    const charActivities = list.filter((a) => (a?.type || '') === '特许寻访')
+    const charPoolOrderByTime = charActivities
+      .map((a) => ({
+        pName: this.normalizePoolName(a?.name),
+        start_time: this.parseBannerTime(a?.start_ts ?? a?.start_time)
+      }))
+      .filter((x) => x.pName)
+      .sort((a, b) => a.start_time - b.start_time)
+      .map((x) => x.pName)
+
+    const upCharName = upCharNames.length > 0 ? upCharNames.join('、') : ''
+    return { upCharNames, upCharName, upWeaponName, activeCharPoolName, activeWeaponPoolName, poolUpMap, charPoolOrderByTime }
+  }
+
+  async getCurrentUpFromBackendApi() {
     const commonCfg = setting.getConfig('common') || {}
     if (!commonCfg.api_key || String(commonCfg.api_key).trim() === '') return null
     try {
@@ -207,58 +325,120 @@ export class EndfieldGacha extends plugin {
       const res = await req.getWikiData('bili_wiki_activities')
       if (!res || res.code !== 0) return null
       const list = Array.isArray(res.data?.items) ? res.data.items : (Array.isArray(res.data?.activities) ? res.data.activities : [])
-      const activeOnly = list.filter((a) => a?.is_active === true)
-      let upCharNames = []
-      let upWeaponName = ''
-      let activeCharPoolName = ''
-      let activeWeaponPoolName = ''
-      const charActivity = activeOnly.find((a) => (a?.type || '') === '特许寻访')
-      if (charActivity?.up && String(charActivity.up).trim()) {
-        const upStr = String(charActivity.up).trim()
-        upCharNames = [upStr]
-      }
-      if (charActivity?.name) {
-        const idx = charActivity.name.indexOf('·')
-        activeCharPoolName = idx !== -1 ? charActivity.name.slice(idx + 1).trim() : charActivity.name.trim()
-      }
-      const weaponActivity = activeOnly.find((a) => (a?.type || '') === '武库申领')
-      if (weaponActivity?.up && String(weaponActivity.up).trim()) {
-        upWeaponName = String(weaponActivity.up).trim()
-        activeWeaponPoolName = upWeaponName
-      } else if (weaponActivity?.name) {
-        const idx = weaponActivity.name.indexOf('·')
-        activeWeaponPoolName = idx !== -1 ? weaponActivity.name.slice(idx + 1).trim() : weaponActivity.name.trim()
-      }
-      const poolUpMap = {}
-      for (const a of list) {
-        if (!a?.name || !a?.up) continue
-        const pIdx = a.name.indexOf('·')
-        const pName = pIdx !== -1 ? a.name.slice(pIdx + 1).trim() : a.name.trim()
-        const upStr = String(a.up).trim()
-        if (pName && upStr) poolUpMap[pName] = upStr
-      }
-      const parseStartTime = (s) => {
-        if (!s || typeof s !== 'string') return 0
-        const normalized = String(s).trim().replace(/\//g, '-')
-        const t = new Date(normalized).getTime()
-        return Number.isFinite(t) ? t : 0
-      }
-      const charActivities = list.filter((a) => (a?.type || '') === '特许寻访')
-      const charPoolOrderByTime = charActivities
-        .map((a) => {
-          const pIdx = a?.name?.indexOf('·')
-          const pName = pIdx !== -1 ? a.name.slice(pIdx + 1).trim() : (a?.name || '').trim()
-          return { pName, start_time: parseStartTime(a?.start_time) }
-        })
-        .filter((x) => x.pName)
-        .sort((a, b) => a.start_time - b.start_time)
-        .map((x) => x.pName)
-      const upCharName = upCharNames.length > 0 ? upCharNames.join('、') : ''
-      return { upCharNames, upCharName, upWeaponName, activeCharPoolName, activeWeaponPoolName, poolUpMap, charPoolOrderByTime }
+      return this.parseBiliWikiUpResult(list)
     } catch (e) {
-      logger.error(`[终末地插件][抽卡] getCurrentUpFromBiliWiki 失败: ${e?.message || e}`)
+      logger.error(`[终末地插件][抽卡] getCurrentUpFromBackendApi 失败: ${e?.message || e}`)
       return null
     }
+  }
+
+  getCurrentUpFromLocalBannerData() {
+    try {
+      const bannerData = setting.getData('game_banners') || {}
+      const upChars = Array.isArray(bannerData.up_characters) ? bannerData.up_characters : []
+      const upWeapons = Array.isArray(bannerData.up_weapons) ? bannerData.up_weapons : []
+      const nowTs = Date.now()
+
+      const rows = []
+      for (const item of upChars) {
+        const poolName = String(item?.pool_name || '').trim()
+        const charName = String(item?.character_name || '').trim()
+        if (!poolName || !charName) continue
+        const startTs = this.parseBannerTime(item?.start_time)
+        const endTs = this.parseBannerTime(item?.end_time)
+        const isActive = startTs > 0 && endTs > 0 ? (nowTs >= startTs && nowTs <= endTs) : false
+        rows.push({
+          type: '特许寻访',
+          name: `特许寻访·${poolName}`,
+          up: charName,
+          start_time: item?.start_time || '',
+          start_ts: startTs,
+          end_ts: endTs,
+          is_active: isActive
+        })
+      }
+      for (const item of upWeapons) {
+        const poolName = String(item?.pool_name || '').trim()
+        const weaponName = String(item?.weapon_name || '').trim()
+        if (!poolName || !weaponName) continue
+        const startTs = this.parseBannerTime(item?.start_time)
+        const endTs = this.parseBannerTime(item?.end_time)
+        const isActive = startTs > 0 && endTs > 0 ? (nowTs >= startTs && nowTs <= endTs) : false
+        rows.push({
+          type: '武库申领',
+          name: `武库申领·${poolName}`,
+          up: weaponName,
+          start_time: item?.start_time || '',
+          start_ts: startTs,
+          end_ts: endTs,
+          is_active: isActive
+        })
+      }
+
+      if (rows.length === 0) return null
+      return this.parseBiliWikiUpResult(rows)
+    } catch (e) {
+      logger.error(`[终末地插件][抽卡] getCurrentUpFromLocalBannerData 失败: ${e?.message || e}`)
+      return null
+    }
+  }
+
+  async getCurrentUpFromBiliWiki() {
+    const source = this.getBannerInfoSource()
+    if (source === 'local_file') {
+      const localRes = this.getCurrentUpFromLocalBannerData()
+      if (localRes) return localRes
+      return await this.getCurrentUpFromBackendApi()
+    }
+
+    const apiRes = await this.getCurrentUpFromBackendApi()
+    if (apiRes) return apiRes
+    return this.getCurrentUpFromLocalBannerData()
+  }
+
+  async getNoteDataSafe(sklUser, roleId, serverId, scene) {
+    try {
+      return await sklUser.sklReq.getData('note', { roleId, serverId })
+    } catch (e) {
+      logger.error(`[终末地插件][note]${scene}获取失败: ${e?.message || e}`)
+      return null
+    }
+  }
+
+  getNoteCharAvatarUrl(charData) {
+    return charData?.avatarSqUrl ||
+      charData?.avatar_sq_url ||
+      charData?.avatarRtUrl ||
+      charData?.avatar_rt_url ||
+      charData?.avatarUrl ||
+      charData?.avatar_url ||
+      ''
+  }
+
+  parseNoteAvatarData(noteRes) {
+    const chars = Array.isArray(noteRes?.data?.chars) ? noteRes.data.chars : []
+    const byName = {}
+    const byIdAndName = {}
+    for (const c of chars) {
+      const id = c.id || c.char_id || c.charId || c.template_id || c.templateId || ''
+      const name = (c.name || c.name_cn || c.char_name || '').trim()
+      const url = this.getNoteCharAvatarUrl(c)
+      if (!url) continue
+      if (name) byName[name] = url
+      if (id) byIdAndName[id] = { name: name || id, url }
+      if (name) byIdAndName[name] = { name, url }
+    }
+    return {
+      base: noteRes?.code === 0 ? (noteRes.data?.base || {}) : {},
+      byName,
+      byIdAndName
+    }
+  }
+
+  hasAnyGachaRecord(statsData) {
+    return statsData?.has_records === true ||
+      (statsData?.last_fetch != null && String(statsData.last_fetch).trim() !== '') ||
+      ((statsData?.stats?.total_count ?? 0) > 0)
   }
 
   /** 查看抽卡记录：四个卡池合并到一张图中展示，支持 :抽卡记录 <页码>；带「同步」则先同步再展示 */
@@ -274,25 +454,19 @@ export class EndfieldGacha extends plugin {
     const roleId = String(sklUser.endfield_uid || '')
     const serverId = Number(sklUser.server_id || 1)
     const cacheData = this.readLocalGachaCache(this.e.user_id, roleId)
-    const cacheStatsData = cacheData?.stats_data || null
-    const hasCacheRecord = cacheStatsData?.has_records === true ||
-      (cacheStatsData?.last_fetch != null && String(cacheStatsData.last_fetch).trim() !== '') ||
-      ((cacheStatsData?.stats?.total_count ?? 0) > 0)
+    const recordStatsData = cacheData?.stats_data || null
+    const hasRecord = this.hasAnyGachaRecord(recordStatsData)
 
     // 仅 "同步抽卡记录 / 更新抽卡记录" 使用云端同步
     if (wantsSync) {
       return await this.syncGacha({
         afterSyncShowRecords: true,
         fromSync: true,
-        isFirstSync: !hasCacheRecord,
+        isFirstSync: !hasRecord,
         selectPrompt: getMessage('gacha.select_account_sync')
       })
     }
 
-    const recordStatsData = cacheData?.stats_data || null
-    const hasRecord = recordStatsData?.has_records === true ||
-      (recordStatsData?.last_fetch != null && String(recordStatsData.last_fetch).trim() !== '') ||
-      ((recordStatsData?.stats?.total_count ?? 0) > 0)
     if (!cacheData || !hasRecord) {
       await this.reply(getMessage('gacha.no_records'))
       return await this.syncGacha({
@@ -309,17 +483,10 @@ export class EndfieldGacha extends plugin {
     const limit = 10
     const pluResPath = this.e?.runtime?.path?.plugin?.['endfield-plugin']?.res || ''
 
-    // 获取角色/武器头像映射
-    let charAvatarMap = {}
-    try {
-      const noteRes = await sklUser.sklReq.getData('note', { roleId, serverId })
-      const chars = noteRes?.data?.chars || []
-      for (const c of chars) {
-        const name = (c.name || '').trim()
-        const url = c.avatarSqUrl || ''
-        if (name && url) charAvatarMap[name] = url
-      }
-    } catch (e) {}
+    const noteRes = await this.getNoteDataSafe(sklUser, roleId, serverId, '抽卡记录')
+    const noteAvatarData = this.parseNoteAvatarData(noteRes)
+    const charAvatarMap = noteAvatarData.byName
+    const noteBase = noteAvatarData.base
     let upCharNames = []
     let upWeaponName = ''
     const biliUp = await this.getCurrentUpFromBiliWiki()
@@ -327,7 +494,6 @@ export class EndfieldGacha extends plugin {
       upCharNames = biliUp.upCharNames
       if (biliUp.upWeaponName) upWeaponName = biliUp.upWeaponName
     }
-    if (upCharNames.length === 0) upCharNames = []
 
 
     const poolList = [
@@ -336,17 +502,10 @@ export class EndfieldGacha extends plugin {
       { key: 'weapon', label: '武器池' },
       { key: 'limited', label: '限定角色' }
     ]
-    const noteRes = await sklUser.sklReq.getData('note', { roleId, serverId }).catch(() => null)
     const poolResults = poolList.map(({ key }) => this.getCachePoolPage(cacheData, key, page, limit))
-
-    if (!recordStatsData) {
-      await this.reply(getMessage('gacha.no_records'))
-      return true
-    }
 
     const stats = recordStatsData.stats || {}
     const userInfo = recordStatsData.user_info || {}
-    const noteBase = noteRes?.code === 0 ? (noteRes.data?.base || {}) : {}
 
     // 判断是否为 UP 角色/武器
     const isUpItem = (name, poolKey) => {
@@ -445,9 +604,7 @@ export class EndfieldGacha extends plugin {
     const roleId = String(sklUser.endfield_uid || '')
     const cacheData = this.readLocalGachaCache(this.e.user_id, roleId)
     const statsData = cacheData?.stats_data || null
-    const hasRecord = statsData?.has_records === true ||
-      (statsData?.last_fetch != null && String(statsData.last_fetch).trim() !== '') ||
-      ((statsData?.stats?.total_count ?? 0) > 0)
+    const hasRecord = this.hasAnyGachaRecord(statsData)
 
     // 无本地记录时自动开始同步
     if (!statsData || !hasRecord) {
@@ -485,28 +642,11 @@ export class EndfieldGacha extends plugin {
       return t > 0 ? Math.round(t / star6) + '抽' : '-'
     }
 
-
-    let noteCharMap = {}
-    let userAvatar = ''
-    let userNickname = userInfo.nickname || userInfo.game_uid || '未知'
-    try {
-      const noteRes = await sklUser.sklReq.getData('note', { roleId, serverId })
-      const base = noteRes?.data?.base || {}
-      userAvatar = base.avatarUrl || ''
-      if (base.name) userNickname = base.name
-      const chars = noteRes?.data?.chars || []
-      for (const c of chars) {
-        const id = c.id || c.char_id || ''
-        const name = (c.name || '').trim()
-        const url = c.avatarSqUrl || ''
-        if (url) {
-          if (id) noteCharMap[id] = { name: name || id, url }
-          if (name) noteCharMap[name] = { name, url }
-        }
-      }
-    } catch (e) {
-      logger.error(`[终末地插件][抽卡分析]获取 note 失败: ${e?.message || e}`)
-    }
+    const noteRes = await this.getNoteDataSafe(sklUser, roleId, serverId, '抽卡分析')
+    const noteAvatarData = this.parseNoteAvatarData(noteRes)
+    const noteCharMap = noteAvatarData.byIdAndName
+    const userAvatar = noteAvatarData.base.avatarUrl || ''
+    const userNickname = noteAvatarData.base.name || userInfo.nickname || userInfo.game_uid || '未知'
     const userUid = userInfo.game_uid || ''
 
 
@@ -652,10 +792,19 @@ export class EndfieldGacha extends plugin {
           const barColorLevel = colorPercent < 50 ? 'green' : colorPercent < 80 ? 'yellow' : 'red'
           if (isChar) {
             const info = noteCharMap[id] || noteCharMap[name]
-            if (info) images.push({ name: info.name, url: info.url, pullCount, tag, badgeColor, barPercent, barColorLevel, refLinePercent: null })
+            images.push({
+              name: info?.name || name,
+              url: info?.url || '',
+              pullCount,
+              tag,
+              badgeColor,
+              barPercent,
+              barColorLevel,
+              refLinePercent: null
+            })
           } else {
             const cover = weaponCoverMap[name]
-            if (cover) images.push({ name, url: cover, pullCount, tag, badgeColor, barPercent, barColorLevel, refLinePercent: null })
+            images.push({ name, url: cover || '', pullCount, tag, badgeColor, barPercent, barColorLevel, refLinePercent: null })
           }
           pullsSinceLast6 = 0
         }
@@ -688,10 +837,18 @@ export class EndfieldGacha extends plugin {
         const barPercent = Math.min(100, Math.round((pullCount / 10) * 100))
         if (isChar) {
           const info = noteCharMap[id] || noteCharMap[name]
-          if (info) imgs.push({ name: info.name, url: info.url, pullCount, tag: '免费', badgeColor: 'free', barPercent, barColorLevel: 'green' })
+          imgs.push({
+            name: info?.name || name,
+            url: info?.url || '',
+            pullCount,
+            tag: '免费',
+            badgeColor: 'free',
+            barPercent,
+            barColorLevel: 'green'
+          })
         } else {
           const cover = weaponCoverMap[name]
-          if (cover) imgs.push({ name, url: cover, pullCount, tag: '免费', badgeColor: 'free', barPercent, barColorLevel: 'green' })
+          imgs.push({ name, url: cover || '', pullCount, tag: '免费', badgeColor: 'free', barPercent, barColorLevel: 'green' })
         }
       }
       return imgs.reverse()
@@ -841,10 +998,8 @@ export class EndfieldGacha extends plugin {
       const allLimitedPaid = []
       for (const pn of limitedPoolNames) {
         const list = (charByPoolName[pn] || []).filter((r) => r.is_free !== true)
-        logger.mark(`[终末地插件][抽卡分析] 池子 ${pn}: 总记录=${charByPoolName[pn]?.length || 0}, 付费记录=${list.length}`)
         for (const r of list) allLimitedPaid.push({ ...r, _poolName: pn })
       }
-      logger.mark(`[终末地插件][抽卡分析] 合并后限定池付费记录总数: ${allLimitedPaid.length}`)
       // 2) 排序：与 poolUtils.sortRecordsByTimeAndSeq 一致——时间升序，再 seq_id 升序（参考 endfield-gacha 的 chronological 遍历）
       const getTsMs = (r) => {
         const v = r.gacha_ts ?? r.gachaTs
@@ -876,9 +1031,7 @@ export class EndfieldGacha extends plugin {
       const activeCharPoolName = biliUp?.activeCharPoolName || ''
       const fallbackUpNames = (biliUp?.upCharNames?.length ? biliUp.upCharNames : (biliUp?.upCharName ? [biliUp.upCharName] : []))
       const seqIdToSharedPity = {}
-      
-      logger.mark(`[终末地插件][抽卡分析] 开始计算跨池保底，当前活跃池=${activeCharPoolName}, UP角色=${fallbackUpNames.join(',')}`)
-      
+
       for (const r of allLimitedPaid) {
         sharedPityTo6Star += 1
         sharedPityToUp6Star += 1
@@ -888,9 +1041,7 @@ export class EndfieldGacha extends plugin {
           const poolUpName = poolUpMap[r._poolName]
           const upNames = poolUpName ? [poolUpName] : (activeCharPoolName && (r._poolName === activeCharPoolName || r._poolName.includes(activeCharPoolName) || activeCharPoolName.includes(r._poolName)) ? fallbackUpNames : [])
           const isUp = upNames.length > 0 && upNames.some((u) => (u && (name === u || name.includes(u) || u.includes(name))))
-          
-          logger.mark(`[终末地插件][抽卡分析] 6星: ${name}, 池=${r._poolName}, UP判定=${isUp}, 垫抽=${sharedPityTo6Star}`)
-          
+
           const seqKey = String(r.seq_id ?? '').trim()
           if (seqKey) {
             seqIdToSharedPity[seqKey] = sharedPityTo6Star
@@ -907,7 +1058,6 @@ export class EndfieldGacha extends plugin {
       }
       // 4) 当前限定池 = 合并时间线中最后一条记录所在池（与 endfield-gacha 的 isCurrentPool 一致）
       const currentLimitedPoolName = allLimitedPaid.length > 0 ? allLimitedPaid[allLimitedPaid.length - 1]._poolName : limitedPoolNames[0]
-      logger.mark(`[终末地插件][抽卡分析] 限定池跨期保底：当前池=${currentLimitedPoolName}, 共享垫抽=${sharedPityTo6Star}, 到UP垫抽=${sharedPityToUp6Star}`)
       // 5) 所有限定池清空单池垫抽显示，仅当前限定池展示共享保底
       for (let i = 0; i < charPoolEntries.length; i++) {
         const e = charPoolEntries[i]
@@ -1244,6 +1394,98 @@ export class EndfieldGacha extends plugin {
     return msg.replace(/\{qq号\}/g, uid).replace(/\{qqname\}/g, name)
   }
 
+  findGlobalStatsPeriod(periods, keyword) {
+    const target = String(keyword || '').trim()
+    if (!target) return null
+    const rows = Array.isArray(periods) ? periods : []
+    return rows.find((p) => {
+      const names = Array.isArray(p?.up_char_names) ? p.up_char_names : []
+      const poolName = String(p?.pool_name || '').trim()
+      return names.some((n) => {
+        const name = String(n || '').trim()
+        return name === target || name.includes(target) || target.includes(name)
+      }) || poolName === target || poolName.includes(target) || target.includes(poolName)
+    }) || null
+  }
+
+  formatGlobalStatsSyncTime(cached, lastUpdate) {
+    if (cached === true) return '缓存约5分钟'
+    if (!lastUpdate) return '刚刚'
+    try {
+      const d = new Date(lastUpdate)
+      if (Number.isNaN(d.getTime())) return String(lastUpdate)
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+    } catch {
+      return String(lastUpdate)
+    }
+  }
+
+  isGlobalRankingUpChar(row, upCharNames = [], upCharId = '') {
+    if (upCharNames.length > 0) {
+      return upCharNames.some((n) => {
+        const target = String(n || '').trim()
+        const name = String(row?.char_name || '').trim()
+        return name === target || name.includes(target) || target.includes(name)
+      })
+    }
+    return !!(upCharId && row?.char_id === upCharId)
+  }
+
+  buildGlobalDistributionList(distRaw) {
+    const list = Array.isArray(distRaw) ? distRaw : []
+    const maxC = Math.max(...list.map((d) => Number(d?.count ?? 0)), 1)
+    return list.map((d) => ({
+      range: d?.range || '-',
+      count: d?.count ?? 0,
+      height: Math.min(100, Math.max(8, ((Number(d?.count ?? 0) || 0) / maxC) * 100))
+    }))
+  }
+
+  buildGlobalRankingList(rows, options = {}) {
+    const { isLimited = false, upCharNames = [], upCharId = '' } = options
+    const list = Array.isArray(rows) ? rows : []
+    return list.map((r) => ({
+      char_name: r?.char_name || '-',
+      count: r?.count ?? 0,
+      percent: (r?.percent != null ? Number(r.percent).toFixed(1) : '0'),
+      isUp: isLimited && this.isGlobalRankingUpChar(r, upCharNames, upCharId)
+    }))
+  }
+
+  buildGlobalPoolSection(statsData, byType, options = {}) {
+    const { key, label, rankTop = 5, showRanking = true, upCharNames = [], upCharId = '' } = options
+    const poolData = byType?.[key] || {}
+    const poolTotal = poolData?.total ?? 0
+    const poolStar6 = poolData?.star6 ?? 0
+    const avgPity = poolData?.avg_pity != null ? Number(poolData.avg_pity).toFixed(1) : '-'
+    const star6Rate = poolTotal > 0 ? ((poolStar6 / poolTotal) * 100).toFixed(2) + '%' : '0%'
+    const section = {
+      label,
+      key,
+      total: poolTotal,
+      star6: poolStar6,
+      star5: poolData?.star5 ?? 0,
+      star4: poolData?.star4 ?? 0,
+      avgPity,
+      star6Rate,
+      distributionList: this.buildGlobalDistributionList(poolData?.distribution),
+      showRanking,
+      rankingList6: [],
+      rankingList5: [],
+      rankingTab6: key === 'weapon' ? '6星武器' : '6星干员',
+      rankingTab5: key === 'weapon' ? '5星武器' : '5星干员'
+    }
+    if (showRanking) {
+      section.rankingList6 = this.buildGlobalRankingList(statsData?.ranking?.[key]?.six_star, {
+        isLimited: key === 'limited',
+        upCharNames,
+        upCharId
+      }).slice(0, rankTop)
+      section.rankingList5 = this.buildGlobalRankingList(statsData?.ranking?.[key]?.five_star).slice(0, rankTop)
+    }
+    return section
+  }
+
   /** 全服抽卡统计：常驻/新手/武器/限定四类卡池均展示；顶部 UP 与限定池可切换期数，发送「:全服抽卡统计 <干员名>」切换为该干员对应期 */
   async globalGachaStats() {
     const pluResPath = this.e?.runtime?.path?.plugin?.['endfield-plugin']?.res || ''
@@ -1259,13 +1501,7 @@ export class EndfieldGacha extends plugin {
 
     let periodLabel = '当期UP'
     if (charName) {
-      const periods = data.stats.pool_periods || []
-      const found = periods.find((p) => {
-        const names = p.up_char_names || []
-        const poolName = (p.pool_name || '').trim()
-        return names.some((n) => (String(n || '').trim() === charName || (n || '').includes(charName) || charName.includes(n))) ||
-          poolName === charName || poolName.includes(charName) || charName.includes(poolName)
-      })
+      const found = this.findGlobalStatsPeriod(data.stats.pool_periods || [], charName)
       if (!found) {
         await this.reply(getMessage('gacha.global_stats_pool_not_found', { name: charName }))
         return true
@@ -1300,18 +1536,7 @@ export class EndfieldGacha extends plugin {
     const officialRaw = byChannel?.official
     const bilibiliRaw = byChannel?.bilibili
     const fmt = (v) => (v != null ? Number(v).toFixed(2) : '-')
-    const formatSyncTime = (cached, lastUpdate) => {
-      if (cached === true) return '缓存约5分钟'
-      if (!lastUpdate) return '刚刚'
-      try {
-        const d = new Date(lastUpdate)
-        if (Number.isNaN(d.getTime())) return String(lastUpdate)
-        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-      } catch {
-        return String(lastUpdate)
-      }
-    }
-    const syncTime = formatSyncTime(data.cached, data.last_update)
+    const syncTime = this.formatGlobalStatsSyncTime(data.cached, data.last_update)
     const byType = s.by_type || {}
     const official = officialRaw ? {
       total_users: officialRaw.total_users ?? 0,
@@ -1327,7 +1552,7 @@ export class EndfieldGacha extends plugin {
     } : null
     const rankingLimited = s.ranking?.limited?.six_star || []
     const upEntry = rankingLimited.find((r) => r.char_id === upCharId) ??
-      (upCharNames.length > 0 ? rankingLimited.find((r) => upCharNames.some((n) => (r.char_name || '') === n || (r.char_name || '').includes(n))) : null) ??
+      rankingLimited.find((r) => this.isGlobalRankingUpChar(r, upCharNames, upCharId)) ??
       rankingLimited.find((r) => r.char_name === upName)
     const upWinRatePercent = (upEntry?.percent != null ? Number(upEntry.percent).toFixed(1) : '--.-')
     const upWinRateNum = (upEntry?.percent != null ? Math.min(100, Math.max(0, Number(upEntry.percent))) : 0)
@@ -1339,53 +1564,29 @@ export class EndfieldGacha extends plugin {
     }) : null
     const upWeaponWinRatePercent = (upWeaponEntry?.percent != null ? Number(upWeaponEntry.percent).toFixed(1) : '--.-')
     const upWeaponWinRateNum = (upWeaponEntry?.percent != null ? Math.min(100, Math.max(0, Number(upWeaponEntry.percent))) : 0)
-    const isUpChar = (r) => {
-      if (upCharNames.length > 0) return upCharNames.some((n) => (r.char_name || '') === n || (r.char_name || '').includes(n))
-      return !!(upCharId && r.char_id === upCharId)
-    }
-    const buildDistributionList = (distRaw) => {
-      const list = distRaw || []
-      const maxC = Math.max(...list.map((d) => d.count ?? 0), 1)
-      return list.map((d) => ({
-        range: d.range || '-',
-        count: d.count ?? 0,
-        height: Math.min(100, Math.max(8, ((d.count ?? 0) / maxC) * 100))
-      }))
-    }
-    const buildRankingList = (sixStar, isLimited) => {
-      return (sixStar || []).map((r) => ({
-        char_name: r.char_name || '-',
-        count: r.count ?? 0,
-        percent: (r.percent != null ? Number(r.percent).toFixed(1) : '0'),
-        isUp: isLimited && isUpChar(r)
-      }))
-    }
 
     if (this.e?.runtime?.render) {
       try {
-        const buildPoolSection = (key, label, rankTop = 5) => {
-          const poolData = byType[key] || {}
-          const poolTotal = poolData.total ?? 0
-          const poolStar6 = poolData.star6 ?? 0
-          const pAvgPity = poolData.avg_pity != null ? Number(poolData.avg_pity).toFixed(1) : '-'
-          const pStar6Rate = poolTotal > 0 ? ((poolStar6 / poolTotal) * 100).toFixed(2) + '%' : '0%'
-          const rankingList6 = buildRankingList(s.ranking?.[key]?.six_star || [], key === 'limited').slice(0, rankTop)
-          const rankingList5 = buildRankingList(s.ranking?.[key]?.five_star || [], false).slice(0, rankTop)
-          return {
-            label, key,
-            total: poolTotal, star6: poolStar6, star5: poolData.star5 ?? 0, star4: poolData.star4 ?? 0,
-            avgPity: pAvgPity, star6Rate: pStar6Rate,
-            distributionList: buildDistributionList(poolData.distribution),
-            showRanking: true, rankingList6, rankingList5,
-            rankingTab6: key === 'weapon' ? '6星武器' : '6星干员',
-            rankingTab5: key === 'weapon' ? '5星武器' : '5星干员'
-          }
-        }
-        const standardSec = buildPoolSection('standard', '常驻角色')
-        const beginnerSec = buildPoolSection('beginner', '新手池')
-        beginnerSec.showRanking = false
-        const weaponSec = buildPoolSection('weapon', '武器池')
-        const limitedSec = buildPoolSection('limited', periodLabel === '当期UP' ? '限定 · 当期UP' : `限定 · ${periodLabel}`, 10)
+        const standardSec = this.buildGlobalPoolSection(s, byType, {
+          key: 'standard',
+          label: '常驻角色'
+        })
+        const beginnerSec = this.buildGlobalPoolSection(s, byType, {
+          key: 'beginner',
+          label: '新手池',
+          showRanking: false
+        })
+        const weaponSec = this.buildGlobalPoolSection(s, byType, {
+          key: 'weapon',
+          label: '武器池'
+        })
+        const limitedSec = this.buildGlobalPoolSection(s, byType, {
+          key: 'limited',
+          label: periodLabel === '当期UP' ? '限定 · 当期UP' : `限定 · ${periodLabel}`,
+          rankTop: 10,
+          upCharNames,
+          upCharId
+        })
         const poolSections = [beginnerSec, standardSec, weaponSec, limitedSec]
 
         const renderData = {
@@ -1474,6 +1675,7 @@ export class EndfieldGacha extends plugin {
         tasks.push({
           token,
           accountUid: gachaAccounts[0]?.uid || null,
+          roleId: this.getAccountRoleId(gachaAccounts[0]),
           serverId: this.getAccountServerId(gachaAccounts[0])
         })
       } else {
@@ -1481,6 +1683,7 @@ export class EndfieldGacha extends plugin {
           tasks.push({
             token,
             accountUid: acc?.uid || null,
+            roleId: this.getAccountRoleId(acc),
             serverId: this.getAccountServerId(acc)
           })
         }
@@ -1494,14 +1697,16 @@ export class EndfieldGacha extends plugin {
     let skipped = 0
     for (let i = 0; i < tasks.length; i++) {
       if (i > 0) await this.sleep(3000)
-      const { token, accountUid, serverId } = tasks[i]
-      const statusData = await hypergryphAPI.getGachaSyncStatus(token)
+      const { token, accountUid, roleId, serverId } = tasks[i]
+      const query = { role_id: String(roleId || ''), server_id: String(serverId || '1') }
+      const statusData = await hypergryphAPI.getGachaSyncStatus(token, query)
       if (statusData?.status === 'syncing') {
         skipped++
         continue
       }
       const body = {}
       if (accountUid) body.account_uid = accountUid
+      if (roleId) body.role_id = roleId
       if (serverId) body.server_id = serverId
       const res = await hypergryphAPI.postGachaFetch(token, body)
       if (res?.status === 'conflict') skipped++
@@ -1512,7 +1717,7 @@ export class EndfieldGacha extends plugin {
     return true
   }
 
-  /** 抽卡记录同步入口：获取账号列表 → 多账号则让用户选择 → 启动同步 → 轮询状态（群聊/私聊均可）；options.afterSyncSendAnalysis 为 true 时同步完成后会制图发送抽卡分析 */
+  /** 抽卡记录同步入口：直接使用当前激活绑定的角色（role_id/server_id）启动同步并轮询 */
   async syncGacha(options = {}) {
     const targetInfo = await this.resolveSyncTarget(options)
     if (!targetInfo) return true
@@ -1531,8 +1736,11 @@ export class EndfieldGacha extends plugin {
     }
 
     const token = sklUser.framework_token
+    const roleId = String(sklUser.endfield_uid || '')
+    const serverId = String(sklUser.server_id || '1')
+    const query = { role_id: roleId, server_id: serverId }
 
-    const statusData = await hypergryphAPI.getGachaSyncStatus(token)
+    const statusData = await hypergryphAPI.getGachaSyncStatus(token, query)
     if (statusData?.status === 'syncing') {
       const { message, progress, stage, current_pool, records_found, completed_pools, total_pools, elapsed_seconds } = statusData
       const rawMsg = message || (current_pool ? `正在查询${current_pool}...` : '')
@@ -1548,36 +1756,6 @@ export class EndfieldGacha extends plugin {
       await this.reply(msg)
       return true
     }
-
-    const accountsData = await hypergryphAPI.getGachaAccounts(token)
-    if (!accountsData || !accountsData.accounts?.length) {
-      await this.reply(getMessage('gacha.no_accounts'))
-      return true
-    }
-
-    const { accounts, count, need_select } = accountsData
-    if (need_select && count > 1) {
-      let msg = (options?.selectPrompt || getMessage('gacha.select_account_sync')) + '\n'
-      accounts.forEach((acc, i) => {
-        msg += `${i + 1}. ${acc.channel_name || '未知'} - ${acc.nick_name || acc.game_uid || acc.uid}\n`
-      })
-      msg += getMessage('gacha.reply_index')
-      await this.reply(msg)
-      await redis.set(GACHA_KEYS.pending(this.e.user_id), JSON.stringify({
-        accounts,
-        token,
-        target_user_id: String(targetUserId),
-        timestamp: Date.now(),
-        afterSyncSendAnalysis: options?.afterSyncSendAnalysis,
-        fromAnalysis: options?.fromAnalysis,
-        fromSync: options?.fromSync,
-        isFirstSync: options?.isFirstSync
-      }), { EX: 300 })
-      return true
-    }
-
-    const selectedUid = accounts[0]?.uid || null
-    const selectedServerId = this.getAccountServerId(accounts[0])
     const qqName = this.e.sender?.nickname || this.e.sender?.card || String(this.e.user_id)
     
     // 只有一个账号时，在开始同步前发送提示
@@ -1590,7 +1768,7 @@ export class EndfieldGacha extends plugin {
       }
     }
     
-    await this.startFetchAndPoll(token, selectedUid, selectedServerId, targetUserId, qqName, {
+    await this.startFetchAndPoll(token, null, roleId, serverId, targetUserId, qqName, {
       afterSyncSendAnalysis: options?.afterSyncSendAnalysis,
       fromAnalysis: options?.fromAnalysis,
       fromSync: options?.fromSync
@@ -1635,7 +1813,7 @@ export class EndfieldGacha extends plugin {
     return { error: getMessage('gacha.no_accounts') }
   }
 
-  /** 用户回复序号选择账号后启动同步并轮询（以 Redis pending 为准，群聊/私聊均可） */
+  /** 兼容历史“序号选择账号”流程：新流程已改为当前激活绑定直连，此处仅处理旧 pending */
   async receiveGachaSelect() {
     const raw = await redis.get(GACHA_KEYS.pending(this.e.user_id))
     if (!raw) return false // 无待选状态时不消费消息，让其他插件处理
@@ -1656,6 +1834,7 @@ export class EndfieldGacha extends plugin {
     await this.reply(getMessage('gacha.account_selected'))
     const account = data.accounts[index - 1]
     const selectedUid = account?.uid || null
+    const selectedRoleId = this.getAccountRoleId(account)
     const selectedServerId = this.getAccountServerId(account)
     const targetUserId = data.target_user_id || this.e.user_id
     const qqName = this.e.sender?.nickname || this.e.sender?.card || String(this.e.user_id)
@@ -1670,7 +1849,7 @@ export class EndfieldGacha extends plugin {
       }
     }
     
-    await this.startFetchAndPoll(data.token, selectedUid, selectedServerId, targetUserId, qqName, {
+    await this.startFetchAndPoll(data.token, selectedUid, selectedRoleId, selectedServerId, targetUserId, qqName, {
       afterSyncSendAnalysis: data.afterSyncSendAnalysis,
       fromAnalysis: data.fromAnalysis,
       fromSync: data.fromSync
@@ -1680,27 +1859,31 @@ export class EndfieldGacha extends plugin {
 
   /**
    * 启动同步任务并轮询直到 completed / failed
-   * 同步流程：accounts -> fetch(account_uid/server_id) -> status 轮询 -> records 落本地缓存
+   * 同步流程：当前激活绑定 -> fetch(role_id/server_id) -> status 轮询 -> records 落本地缓存
    * @param {string} token 用户 framework_token
    * @param {string|null} accountUid 多账号时选中的 uid
+   * @param {string|null} roleId 游戏角色 ID（绑定中的 role_id）
    * @param {string|null} serverId 服务器 ID（默认 1）
    * @param {string|number} [userId] 当前 QQ 号，用于日志占位符 {qq号}
    * @param {string} [qqName] 当前 QQ 昵称，用于日志占位符 {qqname}
    * @param {{ afterSyncSendAnalysis?: boolean, fromAnalysis?: boolean }} [options] 同步完成后发抽卡分析图；fromAnalysis 为 true 时不发「开始同步」类提示（由抽卡分析已发过）
    */
-  async startFetchAndPoll(token, accountUid, serverId, userId, qqName, options = {}) {
+  async startFetchAndPoll(token, accountUid, roleId, serverId, userId, qqName, options = {}) {
     const afterSyncSendAnalysis = options?.afterSyncSendAnalysis ?? false
     const fromAnalysis = options?.fromAnalysis ?? false
     const fromSync = options?.fromSync ?? false
+    const query = {
+      role_id: String(roleId || ''),
+      server_id: String(serverId || '1')
+    }
     // 先判断是否首次同步，只发一条开始提示（首次→首次同步，否则→开始同步）
-    const statsData = await hypergryphAPI.getGachaStats(token)
-    const hasSyncRecord = statsData?.has_records === true ||
-      (statsData?.last_fetch != null && String(statsData.last_fetch).trim() !== '') ||
-      ((statsData?.stats?.total_count ?? 0) > 0)
+    const statsData = await hypergryphAPI.getGachaStats(token, query)
+    const hasSyncRecord = this.hasAnyGachaRecord(statsData)
     const isFirstSync = !hasSyncRecord
 
     const body = {}
     if (accountUid) body.account_uid = accountUid
+    if (roleId) body.role_id = String(roleId)
     body.server_id = String(serverId || '1')
     const fetchRes = await hypergryphAPI.postGachaFetch(token, body)
     if (fetchRes && fetchRes.status === 'conflict') {
@@ -1723,7 +1906,7 @@ export class EndfieldGacha extends plugin {
       const start = Date.now()
       while (Date.now() - start < SYNC_MS.pollTimeout) {
         await this.sleep(SYNC_MS.pollInterval)
-        const statusData = await hypergryphAPI.getGachaSyncStatus(token)
+        const statusData = await hypergryphAPI.getGachaSyncStatus(token, query)
         if (!statusData) continue
         const { status, message, records_found, new_records, error, current_pool } = statusData
         if (status === 'syncing' && (message || current_pool)) {
@@ -1738,7 +1921,7 @@ export class EndfieldGacha extends plugin {
           const total = records_found ?? 0
           const added = new_records ?? 0
           let poolLine = ''
-          const statsData = await hypergryphAPI.getGachaStats(token)
+          const statsData = await hypergryphAPI.getGachaStats(token, query)
           const stats = statsData?.stats || {}
           if (stats.limited_char_count != null || stats.standard_char_count != null || stats.beginner_char_count != null || stats.weapon_count != null) {
             const parts = []
@@ -1753,9 +1936,16 @@ export class EndfieldGacha extends plugin {
             new_records: added,
             pool_detail: poolLine
           })
-          const cacheUser = new EndfieldUser(userId)
-          const cacheRoleId = (await cacheUser.getUser()) ? String(cacheUser.endfield_uid || '') : ''
-          await this.refreshLocalGachaCacheFromCloud(token, userId, cacheRoleId)
+          let cacheRoleId = String(roleId || '')
+          let cacheServerId = String(serverId || '1')
+          if (!cacheRoleId) {
+            const cacheUser = new EndfieldUser(userId)
+            if (await cacheUser.getUser()) {
+              cacheRoleId = String(cacheUser.endfield_uid || '')
+              cacheServerId = String(cacheUser.server_id || '1')
+            }
+          }
+          await this.refreshLocalGachaCacheFromCloud(token, userId, cacheRoleId, cacheServerId)
           // 同步完成文字 + 分析图始终合并为一条消息发送
           await this.renderAndSendGachaAnalysis(syncDoneMsg, userId)
           return

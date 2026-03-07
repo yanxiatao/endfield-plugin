@@ -101,6 +101,9 @@ export function supportGuoba() {
         
         const gacha = lodash.merge(
           {
+            banner_info: {
+              source: 'backend_api',
+            },
             simulate: {
               enable: true,
               group_whitelist: [],
@@ -112,6 +115,10 @@ export function supportGuoba() {
         if (!gacha.simulate) gacha.simulate = { enable: true, group_whitelist: [], daily_limit: { limited: 0, standard: 0, weapon: 0 } }
         if (!Array.isArray(gacha.simulate.group_whitelist)) gacha.simulate.group_whitelist = []
         if (!gacha.simulate.daily_limit) gacha.simulate.daily_limit = { limited: 0, standard: 0, weapon: 0 }
+        if (!gacha.banner_info || typeof gacha.banner_info !== 'object') gacha.banner_info = { source: 'backend_api' }
+        if (!['backend_api', 'local_file'].includes(String(gacha.banner_info.source || '').trim())) {
+          gacha.banner_info.source = 'backend_api'
+        }
         
         // 将嵌套对象展开为扁平字段名，以匹配 schemas 中的字段名格式
         const result = { ...common }
@@ -131,6 +138,7 @@ export function supportGuoba() {
         }
         
         // 展开 gacha 配置（simulate 及其嵌套）
+        result['gacha.banner_info.source'] = String(gacha.banner_info.source || 'backend_api')
         result['gacha.simulate.enable'] = gacha.simulate.enable !== false
         result['gacha.simulate.group_whitelist'] = gacha.simulate.group_whitelist || []
         result['gacha.simulate.daily_limit.limited'] = Number(gacha.simulate.daily_limit?.limited) || 0

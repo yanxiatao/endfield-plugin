@@ -248,7 +248,8 @@ export class EndfieldAttendance extends plugin {
     completeMsg += `本次失败 ${fail_count}\n`
     completeMsg += '─────────'
     
-    if (fail_users.length > 0) {
+    const hideFailUserListInGroupManual = is_manual && !!this.e?.isGroup
+    if (fail_users.length > 0 && !hideFailUserListInGroupManual) {
       completeMsg += '\n\n失败账号:\n'
       completeMsg += fail_users.map(f => {
         const label = f.sklUser ? `${f.user_id}(${f.sklUser.nickname || f.sklUser.endfield_uid})` : f.user_id

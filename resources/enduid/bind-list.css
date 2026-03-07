@@ -15,7 +15,7 @@
 html, body {
   margin: 0;
   padding: 0;
-  width: 520px;
+  width: 560px;
   overflow-x: hidden;
   background: #f5f5f5;
   font-family: 'HarmonyOS Sans SC', -apple-system, BlinkMacSystemFont, 'Microsoft YaHei', sans-serif;
@@ -23,7 +23,7 @@ html, body {
 }
 
 .bind-list-container {
-  width: 520px;
+  width: 560px;
   padding: 14px 16px 6px;
   position: relative;
 }
@@ -208,6 +208,10 @@ html, body {
 
 .bind-info-sep {
   color: #d1d5db;
+}
+
+.bind-info-item {
+  white-space: nowrap;
 }
 
 /* ========== 未绑定空状态卡片 ========== */

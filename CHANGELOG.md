@@ -5,61 +5,36 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循扩展的语义化版本规范（x.y.z 格式）。
 
-## [2.0.6] - 2026-03-04
+## [2.0.6] - 2026-03-07
 
 ### feat
-- **Cred 直绑与多角色落库**
-  - 新增 `:绑定 <Cred>` 私聊直绑流程，支持 Cred 校验与登录
-  - 扫码 / 手机 / Cred 登录统一支持基于 `available_roles` 批量创建绑定
-  - 新增登录后多账号干员列表合并转发，支持按角色逐一渲染并集中发送
+- **抽卡卡池信息来源可配置**
+  - 新增 `gacha.banner_info.source` 配置，支持 `backend_api` / `local_file`
+  - 新增本地卡池数据文件支持（`data/game_banners.yaml`）用于 UP 信息解析
+- **锅巴新增抽卡配置项**
+  - 新增「卡池信息数据源」可视化配置，并完善默认值与兜底校验
 
 ### changed
-- **绑定数据结构与展示**
-  - 绑定数据写入与同步补充 `channel_name`、`server_name` 字段
-  - `:绑定列表` 服务器展示改为优先读取 `channel_name`
-  - `cred` 登录类型展示文案调整为 `Cred`
-- **手机验证码会话流程**
-  - 发送验证码后缓存 `framework_token` 与动态过期时间（`expire`）
-  - 仅在发送成功后进入 `phoneVerifyCode` 上下文，避免未触发手机登录时误消费 6 位数字消息
-  - `手机绑定` 命令匹配补充 `登录` 别名
-- **干员列表接口增强**
-  - `operator.getOperatorList` 新增 `retImage` 返回模式
-  - 支持通过参数覆盖 `frameworkToken/roleId/serverId`，用于多账号场景下按角色渲染
-- **攻略查询来源与开关**
-  - 新增 `common.use_wiki_strategy` 配置项（默认 `true`），用于控制是否启用 Wiki 干员攻略
-  - `:攻略列表` 改为分组展示 `本地攻略(data/strategy-img)`、`默认攻略(defSet/strategy)`、`Wiki 干员攻略`
-  - `:<名称>攻略` 在关闭 Wiki 时仅查询本地/默认攻略图；开启但未配置 `api_key` 时优先回退本地/默认攻略图
-- **锅巴配置适配**
-  - 在锅巴基础配置中新增「启用 Wiki 干员攻略」开关
-  - 锅巴保存逻辑支持 `use_wiki_strategy` 写入 `config/common.yaml`
-- **定时任务（cron）配置化**
-  - 新增 `common.push_stamina`、`common.push_announcement` 配置（`enabled + cron`）
-  - `理智订阅推送`、`公告推送` 从固定 cron 改为读取配置，支持在锅巴面板直接调整
-  - 锅巴基础配置新增定时任务分组，支持理智/公告推送开关与 cron 可视化编辑
-- **cron 表达式兼容处理**
-  - 新增 `utils/cron.js` 统一规范化表达式（兼容 5 位/6 位/7 位，支持将 `?` 转 `*`）
-  - 定时任务构建阶段统一使用 `getTaskCron`，非法表达式自动回退默认值并记录日志
+- **抽卡多角色参数链路对齐**
+  - `refreshLocalGachaCacheFromCloud` 支持按 `role_id + server_id` 刷新缓存
+  - 抽卡统计/记录/同步状态请求统一支持 `role_id + server_id` 参数透传
+- **抽卡代码结构整理**
+  - 新增 `note` 数据安全获取与头像解析公共方法，减少重复逻辑
+  - 全服统计流程提炼公共辅助方法（期数匹配、时间格式化、排名/分布构建）
+  - 清理部分冗余判断与重复构建逻辑
+- **绑定列表样式微调**
+  - `bind-list` 宽度从 `520px` 调整至 `560px`
+  - 绑定信息项改为不换行，优化 `bilibili服` 展示
 
 ### fix
-- **登录流程日志收敛**
-  - 移除 Cred / 网页授权 / 手机登录与验证码验证阶段的过程日志
-  - 移除网页授权轮询中的逐次状态日志输出
-- **授权轮询边界修正**
-  - 后台授权状态轮询仅处理 `auth` 类型账号，不再将 `cred` 账号纳入授权轮询检查
-- **统一后端接口兼容**
-  - `POST /login/endfield/phone/verify` 支持可选透传 `framework_token`
-  - 新增 `GET /login/endfield/cred/verify` 的客户端调用封装
-  - 发送验证码接口改为返回结构化数据，异常时统一返回 `null`
-- **定时任务开关与执行边界**
-  - `pushStamina`、`pushNewAnnouncement` 执行前增加 `enabled` 开关判断，关闭时不再轮询与推送
-  - 自动签到任务执行前重新读取 `sign` 配置，非手动触发时 `auto_sign=false` 将直接跳过
-  - `签到任务` cron 改为统一规范化处理，避免不同格式表达式导致的调度异常
+- **签到汇总在群聊内隐藏失败账号明细**
+  - 手动在群内触发 `:全部签到` 时，仅展示统计结果，不再附带失败账号列表
+- **公告长图清晰度修复**
+  - 调整公告列表/详情页模板与样式，修复长图片展示模糊问题
 
 ### docs
-- **文档与帮助更新**
-  - `API.md` 补充 Cap PoW、登录流程、多角色返回与绑定接口参数说明
-  - `README.md`、`defSet/help.yaml` 增加 Cred 绑定命令说明
-  - `defSet/message.yaml` 新增 `enduid.cred_invalid` 提示文案
+- **接口文档更新**
+  - 同步更新 `API.md` 与 `MaaEnd-API.md` 抽卡相关接口说明与参数描述
 
 ## [2.0.5] - 2026-03-03
 

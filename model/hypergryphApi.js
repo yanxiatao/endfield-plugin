@@ -643,15 +643,21 @@ let hypergryphAPI = {
    * 抽卡记录：获取同步状态（轮询）
    * GET /api/endfield/gacha/sync/status
    * @param {string} frameworkToken 用户凭证
+   * @param {{ role_id?: string, server_id?: string }} [params] 指定角色/服务器
    * @returns {{ status: string, progress?: number, message?: string, records_found?: number, new_records?: number, error?: string, ... } | null}
    */
-  async getGachaSyncStatus(frameworkToken) {
+  async getGachaSyncStatus(frameworkToken, params = {}) {
     const config = getUnifiedBackendConfig()
     const headers = { 'X-Framework-Token': frameworkToken }
     if (config.apiKey) headers['X-API-Key'] = config.apiKey
+    const q = new URLSearchParams()
+    if (params.role_id != null && String(params.role_id).trim() !== '') q.set('role_id', String(params.role_id).trim())
+    if (params.server_id != null && String(params.server_id).trim() !== '') q.set('server_id', String(params.server_id).trim())
+    const query = q.toString()
+    const url = `${config.baseUrl}/api/endfield/gacha/sync/status${query ? `?${query}` : ''}`
 
     try {
-      const response = await fetch(`${config.baseUrl}/api/endfield/gacha/sync/status`, {
+      const response = await fetch(url, {
         timeout: 15000,
         method: 'get',
         headers
@@ -671,7 +677,7 @@ let hypergryphAPI = {
    * 抽卡记录：获取已保存的记录（分页、卡池筛选）
    * GET /api/endfield/gacha/records
    * @param {string} frameworkToken 用户凭证
-   * @param {{ pools?: string, page?: number, limit?: number }} params
+   * @param {{ pools?: string, page?: number, limit?: number, role_id?: string, server_id?: string }} params
    * @returns {{ records: Array, total: number, stats?: object, user_info?: object } | null}
    */
   async getGachaRecords(frameworkToken, params = {}) {
@@ -682,6 +688,8 @@ let hypergryphAPI = {
     if (params.pools) q.set('pools', params.pools)
     if (params.page != null) q.set('page', String(params.page))
     if (params.limit != null) q.set('limit', String(params.limit))
+    if (params.role_id != null && String(params.role_id).trim() !== '') q.set('role_id', String(params.role_id).trim())
+    if (params.server_id != null && String(params.server_id).trim() !== '') q.set('server_id', String(params.server_id).trim())
     const query = q.toString()
 
     try {
@@ -701,7 +709,7 @@ let hypergryphAPI = {
   /**
    * 抽卡记录：分页拉取全部记录（用于抽卡分析等需要全量数据的场景）
    * @param {string} frameworkToken 用户凭证
-   * @param {{ pools?: string, limit?: number }} params 卡池与每页条数（默认 500）
+   * @param {{ pools?: string, limit?: number, role_id?: string, server_id?: string }} params 卡池与每页条数（默认 500）
    * @returns {{ records: Array, total: number, stats?: object, user_info?: object } | null}
    */
   async getGachaRecordsAllPages(frameworkToken, params = {}) {
@@ -722,15 +730,21 @@ let hypergryphAPI = {
    * 抽卡记录：获取统计信息
    * GET /api/endfield/gacha/stats
    * @param {string} frameworkToken 用户凭证
+   * @param {{ role_id?: string, server_id?: string }} [params] 指定角色/服务器
    * @returns {{ stats: object, pool_stats?: object, last_fetch?: string, has_records?: boolean, user_info?: object } | null}
    */
-  async getGachaStats(frameworkToken) {
+  async getGachaStats(frameworkToken, params = {}) {
     const config = getUnifiedBackendConfig()
     const headers = { 'X-Framework-Token': frameworkToken }
     if (config.apiKey) headers['X-API-Key'] = config.apiKey
+    const q = new URLSearchParams()
+    if (params.role_id != null && String(params.role_id).trim() !== '') q.set('role_id', String(params.role_id).trim())
+    if (params.server_id != null && String(params.server_id).trim() !== '') q.set('server_id', String(params.server_id).trim())
+    const query = q.toString()
+    const url = `${config.baseUrl}/api/endfield/gacha/stats${query ? `?${query}` : ''}`
 
     try {
-      const response = await fetch(`${config.baseUrl}/api/endfield/gacha/stats`, {
+      const response = await fetch(url, {
         timeout: 15000,
         method: 'get',
         headers

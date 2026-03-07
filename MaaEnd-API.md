@@ -1,6 +1,6 @@
 # MaaEnd 远程控制 API 文档
 
-版本号：1.2.0
+版本号：1.4.0
 
 ## 概述
 
@@ -34,10 +34,10 @@ X-API-Key: <your_api_key>
 **获取方式**：
 1. 登录 Web 平台
 2. 进入「开发者设置」-「API Key 管理」
-3. 创建新的 API Key，权限需包含 `maaend`
+3. 创建新的 API Key
 
-**API Key 权限要求**：
-- 必须拥有 `maaend` 权限才能调用 MaaEnd API
+**说明**：
+- 当前版本暂不要求特定权限，任何有效的 API Key 均可调用 MaaEnd API
 - 可选设置 IP 白名单增强安全性
 
 **适用场景**：
@@ -142,7 +142,7 @@ Authorization: Bearer <token>
         "device_name": "我的电脑",
         "status": "online",
         "maaend_version": "v1.6.6",
-        "client_version": "v0.1.0",
+        "client_version": "v0.4.0",
         "os_info": "windows amd64 (Windows 10+)",
         "last_seen": "2026-01-31T16:00:00+08:00",
         "created_at": "2026-01-30T12:00:00+08:00",
@@ -318,25 +318,56 @@ Authorization: Bearer <token>
   "data": {
     "tasks": [
       {
-        "name": "daily",
-        "label": "日常任务",
-        "description": "自动完成每日任务",
+        "name": "DailyRewards",
+        "label": "日常奖励",
+        "description": "自动领取每日奖励",
         "options": [
           {
-            "name": "fight_mode",
-            "type": "select",
-            "label": "作战模式",
+            "name": "DailyEmailRewards",
+            "type": "switch",
+            "label": "邮件奖励",
+            "description": "自动领取邮件奖励",
             "cases": [
-              {"name": "auto", "label": "自动"},
-              {"name": "manual", "label": "手动"}
+              {"name": "Yes", "label": "是"},
+              {"name": "No", "label": "否"}
             ],
-            "default_case": "auto"
+            "default_case": ["Yes"],
+            "controller": ["Win32-Window", "Win32-Front"],
+            "resource": ["官服", "B 服"]
+          },
+          {
+            "name": "CreditShoppingOptions",
+            "type": "input",
+            "label": "信用购物设置",
+            "inputs": [
+              {
+                "name": "buy_first",
+                "label": "优先购买",
+                "description": "优先购买的物品名称，用|分隔",
+                "pipeline_type": "string",
+                "default": "嵌晶玉|武库配额"
+              }
+            ]
           }
-        ]
+        ],
+        "controller": ["Win32-Window", "Win32-Front"],
+        "resource": []
       }
     ],
-    "controllers": ["Win32.MuMu", "Win32.Official"],
-    "resources": ["Official", "Bilibili"]
+    "controllers": ["Win32-Window", "Win32-Window-Background", "Win32-Front", "ADB"],
+    "resources": ["官服", "B 服", "Global"],
+    "presets": [
+      {
+        "name": "DailyFull",
+        "label": "完整日常",
+        "description": "执行所有日常任务",
+        "tasks": [
+          {"name": "VisitFriends", "enabled": true, "options": {"PriorStealVegetables": "Yes"}},
+          {"name": "DailyRewards", "enabled": true, "options": {"DailyEmailRewards": "Yes"}},
+          {"name": "ExperimentalTask", "enabled": false, "options": {}}
+        ]
+      }
+    ]
   }
 }
 ```
@@ -346,8 +377,21 @@ Authorization: Bearer <token>
 | 类型 | 说明 |
 |------|------|
 | select | 单选，从 cases 中选择一个 |
+| switch | 开关（Yes/No 二选一，与 select 结构相同） |
 | checkbox | 多选，从 cases 中选择多个 |
-| input | 输入框，需要用户输入值 |
+| input | 输入框，从 inputs 中获取字段定义 |
+
+**Input 类型选项字段**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| name | string | 输入字段名 |
+| label | string | 显示名称 |
+| description | string | 字段说明 |
+| pipeline_type | string | 值类型（string/int/bool） |
+| default | any | 默认值 |
+| verify | string | 正则表达式校验规则 |
+| pattern_msg | string | 校验失败提示信息 |
 
 ---
 
@@ -355,28 +399,47 @@ Authorization: Bearer <token>
 
 向设备下发任务执行指令。
 
+**方式一：指定任务列表**
+
 ```http
 POST /api/maaend/devices/:device_id/tasks
 Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "controller": "Win32.MuMu",
-  "resource": "Official",
+  "controller": "Win32-Window",
+  "resource": "官服",
   "tasks": [
     {
-      "name": "daily",
+      "name": "DailyRewards",
       "options": {
-        "fight_mode": "auto"
+        "DailyEmailRewards": "Yes",
+        "DailyTaskRewards": "Yes"
       }
     },
     {
-      "name": "recruit",
+      "name": "SellProduct",
       "options": {}
     }
   ]
 }
 ```
+
+**方式二：使用预设**
+
+```http
+POST /api/maaend/devices/:device_id/tasks
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "controller": "Win32-Window",
+  "resource": "官服",
+  "preset": "DailyFull"
+}
+```
+
+当指定 `preset` 时，后端会自动将预设展开为任务列表（包含预设中定义的默认选项），并跳过 `enabled=false` 的任务，无需手动传入 `tasks`。
 
 **路径参数**：
 
@@ -390,9 +453,10 @@ Content-Type: application/json
 |------|------|------|------|
 | controller | string | 是 | 控制器名称 |
 | resource | string | 是 | 资源名称 |
-| tasks | array | 是 | 任务列表（至少 1 个） |
+| tasks | array | 条件 | 任务列表（与 preset 二选一） |
 | tasks[].name | string | 是 | 任务名称 |
 | tasks[].options | object | 否 | 任务选项 |
+| preset | string | 条件 | 预设名称（与 tasks 二选一，后端自动展开） |
 
 **响应示例**：
 
@@ -658,7 +722,7 @@ WS /ws/maaend
     "bind_code": "123456",
     "device_name": "我的电脑",
     "maaend_version": "v1.6.6",
-    "client_version": "v0.1.0",
+    "client_version": "v0.4.0",
     "maaend_path": "C:/MaaEnd",
     "os_info": "windows amd64 (Windows 10+)"
   }
@@ -681,7 +745,7 @@ WS /ws/maaend
   "payload": {
     "device_token": "已保存的设备令牌",
     "maaend_version": "v1.6.6",
-    "client_version": "v0.1.0"
+    "client_version": "v0.4.0"
   }
 }
 ```
@@ -698,8 +762,20 @@ WS /ws/maaend
   "type": "capabilities",
   "payload": {
     "tasks": [...],
-    "controllers": ["Win32.MuMu"],
-    "resources": ["Official"]
+    "controllers": ["Win32-Window", "Win32-Window-Background", "Win32-Front", "ADB"],
+    "resources": ["官服", "B 服", "Global"],
+    "presets": [
+      {
+        "name": "DailyFull",
+        "label": "完整日常",
+        "description": "执行所有日常任务",
+        "tasks": [
+          {"name": "VisitFriends", "enabled": true, "options": {"PriorStealVegetables": "Yes"}},
+          {"name": "DailyRewards", "enabled": true, "options": {"DailyEmailRewards": "Yes"}},
+          {"name": "ExperimentalTask", "enabled": false, "options": {}}
+        ]
+      }
+    ]
   }
 }
 ```
@@ -994,19 +1070,48 @@ interface TaskInfo {
   label: string;               // 显示名称
   description: string;         // 描述
   options: OptionInfo[];       // 可配置选项
+  controller?: string[];       // 限定可用的控制器（为空则不限制）
+  resource?: string[];         // 限定可用的资源（为空则不限制）
 }
 
 interface OptionInfo {
   name: string;                // 选项名称
-  type: "select" | "checkbox" | "input";
+  type: "select" | "switch" | "checkbox" | "input";
   label: string;               // 显示名称
-  cases: CaseInfo[];           // 可选项（select/checkbox）
-  default_case: string;        // 默认值
+  description?: string;        // 选项说明
+  cases?: CaseInfo[];          // 可选项（select/switch/checkbox）
+  inputs?: InputInfo[];        // 输入字段（input 类型）
+  default_case?: string[];     // 默认值（select/switch 取首项，checkbox 可多项）
+  controller?: string[];       // 限定可用的控制器（为空则不限制）
+  resource?: string[];         // 限定可用的资源（为空则不限制）
 }
 
 interface CaseInfo {
   name: string;                // 选项值
   label: string;               // 显示名称
+}
+
+interface InputInfo {
+  name: string;                // 输入字段名
+  label: string;               // 显示名称
+  description?: string;        // 字段说明
+  pipeline_type?: string;      // 值类型（string/int/bool）
+  default?: any;               // 默认值
+  verify?: string;             // 正则校验规则
+  pattern_msg?: string;        // 校验失败提示
+}
+
+interface PresetInfo {
+  name: string;                // 预设名称
+  label: string;               // 显示名称
+  description?: string;        // 预设说明
+  tasks: PresetTask[];         // 预设任务列表（含默认选项）
+}
+
+interface PresetTask {
+  name: string;                // 任务名称
+  enabled?: boolean;           // 是否启用（默认 true，false 表示展开预设时跳过）
+  options?: Record<string, any>; // 预设选项
 }
 ```
 
@@ -1030,11 +1135,26 @@ interface CaseInfo {
 | WS | `/ws/maaend` | Client 连接 | 无（连接后认证） |
 | WS | `/api/maaend/ws` | 用户实时推送 | JWT / API Key |
 
-**API Key 权限要求**：需要 `maaend` 权限
+> **注意**：当前版本暂不要求特定权限，任何有效的 API Key 均可调用 MaaEnd API。
 
 ---
 
 ## 更新日志
+
+### v1.4.0 (2026-03-06)
+
+- ✅ **MaaFW PI v2.3.1 对齐（P4）**
+  - `OptionInfo.default_case` 统一为 `string[]` 语义
+  - capabilities 中补齐 `option.controller` / `option.resource` 字段
+  - `PresetTask` 新增 `enabled` 字段，展开预设时会跳过 `enabled=false` 的任务
+  - `input.pipeline_type` 文档说明扩展为 `string/int/bool`
+
+### v1.3.0 (2026-02-06)
+
+- ✅ **取消 API Key 权限限制**
+  - MaaEnd API 不再要求 API Key 拥有 `maaend` 权限
+  - 任何有效的 API Key 均可调用 MaaEnd API
+  - 后续权限系统完善后可能恢复细粒度权限控制
 
 ### v1.2.0 (2026-01-31)
 
@@ -1062,6 +1182,6 @@ interface CaseInfo {
 
 ---
 
-*文档版本: 1.2.0*
+*文档版本: 1.4.0*
 *创建日期: 2026-01-31*
-*最后更新: 2026-01-31*
+*最后更新: 2026-03-06*

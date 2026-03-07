@@ -1,4 +1,10 @@
 # 抽卡相关配置（含模拟抽卡）
+banner_info:
+  # 卡池信息来源：
+  # - backend_api：使用后端 API（bili_wiki_activities）
+  # - local_file：使用本地 data/game_banners.yaml
+  source: backend_api
+
 simulate:
   # 功能开关：关闭后所有人无法使用模拟抽卡
   enable: true

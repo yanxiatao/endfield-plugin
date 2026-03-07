@@ -2,8 +2,29 @@
 export default function getGachaSchemas(groupList) {
   return [
     {
-      label: '模拟抽卡配置',
+      label: '抽卡配置',
       component: 'SOFT_GROUP_BEGIN'
+    },
+    {
+      component: 'Divider',
+      label: '卡池信息来源',
+    },
+    {
+      field: 'gacha.banner_info.source',
+      label: '卡池信息数据源',
+      bottomHelpMessage: 'backend_api：后端 bili_wiki_activities；local_file：本地 data/game_banners.yaml',
+      component: 'Select',
+      componentProps: {
+        options: [
+          { label: '后端 API（bili_wiki_activities）', value: 'backend_api' },
+          { label: '本地文件（game_banners.yaml）', value: 'local_file' },
+        ],
+        placeholder: '请选择卡池信息来源',
+      },
+    },
+    {
+      component: 'Divider',
+      label: '模拟抽卡配置',
     },
     {
       field: 'gacha.simulate.enable',
