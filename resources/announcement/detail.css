@@ -82,8 +82,6 @@ html, body {
   display: block;
   vertical-align: top;
   background: #f3f4f6;
-  /* 限制单边过长，避免截图过高；宽图不受影响 */
-  max-height: 1200px;
   object-fit: contain;
   object-position: top center;
 }
@@ -121,6 +119,8 @@ html, body {
   height: auto;
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  /* 优化图片在缩放时的锐度（Chrome） */
+  image-rendering: -webkit-optimize-contrast;
 }
 .detail-link-block {
   margin: 1em 0;

@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="{{_res_path}}announcement/detail.css">
   <style>
     html, body { width: {{pageWidth}}px; min-width: {{pageWidth}}px; box-sizing: border-box; }
+    /* 使用 sys.scale 对页面做缩放（可使 Puppeteer 输出更高像素密度的截图，改善长图模糊） */
+    body { transform-origin: 0 0; zoom: {{sys?.scale || 1}}; }
   </style>
 </head>
 <body>
