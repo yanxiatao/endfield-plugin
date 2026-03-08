@@ -183,6 +183,15 @@ help_group:
       - icon: 6
         title: ":全部签到"
         desc: "为所有已绑定账号执行签到"
+      - icon: 6
+        title: ":签到缓存状态"
+        desc: "查看今日签到缓存账号数与过期时间"
+      - icon: 5
+        title: ":redis清理"
+        desc: "清理 ENDFIELD 命名空间下的无用键"
+      - icon: 5
+        title: ":redis清理账号 <QQ列表>"
+        desc: "按 QQ 批量清理绑定（支持多行“QQ(昵称)”）"
       - icon: 12
         title: ":重置全员抽卡"
         desc: "重置所有用户的模拟抽卡状态（管理员）"

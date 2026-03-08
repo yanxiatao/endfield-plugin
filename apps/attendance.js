@@ -4,6 +4,8 @@ import setting from '../utils/setting.js'
 import common from '../../../lib/common/common.js'
 import { normalizeCronExpression } from '../utils/cron.js'
 
+const ATTENDANCE_DAILY_MARK_PREFIX = 'ENDFIELD:ATTENDANCE_SIGNED:'
+
 function getTaskCron(cronExpression, fallback, taskName) {
   try {
     return normalizeCronExpression(cronExpression || fallback)
@@ -11,6 +13,59 @@ function getTaskCron(cronExpression, fallback, taskName) {
     logger.error(`[终末地插件][${taskName}] cron 表达式无效，已回退默认值: ${error?.message || error}`)
     return normalizeCronExpression(fallback)
   }
+}
+
+function getTodayDateStr() {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+function getSecondsUntilTomorrow() {
+  const now = new Date()
+  const tomorrow = new Date(now)
+  tomorrow.setHours(24, 0, 0, 0)
+  // 额外加 60 秒缓冲，避免 0 点附近边界抖动
+  return Math.max(60, Math.ceil((tomorrow.getTime() - now.getTime()) / 1000) + 60)
+}
+
+async function loadTodayAttendanceMarkSet() {
+  const key = `${ATTENDANCE_DAILY_MARK_PREFIX}${getTodayDateStr()}`
+  const markSet = new Set()
+  try {
+    const txt = await redis.get(key)
+    if (!txt) return { key, markSet }
+    const arr = JSON.parse(txt)
+    if (Array.isArray(arr)) {
+      for (const item of arr) {
+        if (!item) continue
+        markSet.add(String(item))
+      }
+    }
+  } catch (error) {
+    logger.error(`[终末地插件][签到缓存]读取失败：${error?.message || error}`)
+  }
+  return { key, markSet }
+}
+
+async function saveTodayAttendanceMarkSet(key, markSet) {
+  try {
+    await redis.set(key, JSON.stringify(Array.from(markSet)), { EX: getSecondsUntilTomorrow() })
+  } catch (error) {
+    logger.error(`[终末地插件][签到缓存]写入失败：${error?.message || error}`)
+  }
+}
+
+function getAttendanceMarkId(userId, sklUser) {
+  const uid = String(userId || '')
+  const roleId = Number(sklUser?.endfield_uid || 0)
+  if (roleId > 0) return `${uid}:role:${roleId}`
+  if (sklUser?.binding_id) return `${uid}:binding:${sklUser.binding_id}`
+  if (sklUser?.framework_token) return `${uid}:token:${sklUser.framework_token}`
+  if (sklUser?.nickname) return `${uid}:nickname:${sklUser.nickname}`
+  return ''
 }
 
 export class EndfieldAttendance extends plugin {
@@ -30,6 +85,11 @@ export class EndfieldAttendance extends plugin {
         {
           reg: '^(?:[:：]|[/#](?:zmd|终末地))全部签到$',
           fnc: 'attendance_task',
+          permission: 'master'
+        },
+        {
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))签到缓存状态$',
+          fnc: 'attendance_cache_status',
           permission: 'master'
         }
       ]
@@ -53,10 +113,18 @@ export class EndfieldAttendance extends plugin {
       return true
     }
 
+    const attendanceCache = await loadTodayAttendanceMarkSet()
+    let cacheDirty = false
     const results = []
     for (const sklUser of allUsers) {
       const label = sklUser.nickname || sklUser.endfield_uid || '未知'
+      const markId = getAttendanceMarkId(userId, sklUser)
       try {
+        if (markId && attendanceCache.markSet.has(markId)) {
+          results.push(`【${label}】今日已签到（缓存）`)
+          continue
+        }
+
         const res = await sklUser.sklReq.getData('endfield_attendance')
 
         if (!res || res.code !== 0) {
@@ -67,6 +135,10 @@ export class EndfieldAttendance extends plugin {
 
         if (res.data?.already_signed) {
           results.push(`【${label}】${res.data.message || '今日已签到'}`)
+          if (markId) {
+            attendanceCache.markSet.add(markId)
+            cacheDirty = true
+          }
           continue
         }
 
@@ -83,13 +155,62 @@ export class EndfieldAttendance extends plugin {
           }
         }
         results.push(msg)
+        if (markId) {
+          attendanceCache.markSet.add(markId)
+          cacheDirty = true
+        }
       } catch (err) {
         logger.error(`[终末地插件][签到]账号 ${label} 异常: ${err}`)
         results.push(`【${label}】签到异常`)
       }
     }
 
+    if (cacheDirty) {
+      await saveTodayAttendanceMarkSet(attendanceCache.key, attendanceCache.markSet)
+    }
+
     await this.reply(results.join('\n'))
+    return true
+  }
+
+  async attendance_cache_status() {
+    if (!this.e?.isMaster) return false
+    if (!redis) {
+      await this.reply('Redis 不可用')
+      return true
+    }
+
+    const date = getTodayDateStr()
+    const attendanceCache = await loadTodayAttendanceMarkSet()
+    let ttl = -2
+    try {
+      ttl = await redis.ttl(attendanceCache.key)
+    } catch (error) {
+      logger.error(`[终末地插件][签到缓存]读取 TTL 失败：${error?.message || error}`)
+    }
+
+    const formatTtl = (seconds) => {
+      const s = Number(seconds)
+      if (s === -2) return '未创建'
+      if (s === -1) return '无过期时间'
+      if (!Number.isFinite(s) || s < 0) return '未知'
+      const h = Math.floor(s / 3600)
+      const m = Math.floor((s % 3600) / 60)
+      const sec = s % 60
+      return `${h}小时${m}分${sec}秒`
+    }
+
+    const msg = [
+      '[ 签到缓存状态 ]',
+      '─────────',
+      `日期 ${date}`,
+      `缓存账号 ${attendanceCache.markSet.size}`,
+      `剩余TTL ${formatTtl(ttl)}`,
+      `缓存键 ${attendanceCache.key}`,
+      '─────────'
+    ].join('\n')
+
+    await this.reply(msg)
     return true
   }
 
@@ -148,6 +269,10 @@ export class EndfieldAttendance extends plugin {
     if (!is_manual && this.setting.auto_sign === false) return true
 
     const keys = await redis.keys('ENDFIELD:USER:*')
+    const attendanceCache = await loadTodayAttendanceMarkSet()
+    let cacheDirty = false
+    let cache_skip_count = 0
+    let total_account_count = 0
     let success_count = 0
     let signed_count = 0
     let fail_count = 0
@@ -178,6 +303,14 @@ export class EndfieldAttendance extends plugin {
 
       // 遍历该用户绑定的所有账号逐一签到
       for (const sklUser of allUsers) {
+        total_account_count += 1
+        const markId = getAttendanceMarkId(user_id, sklUser)
+        if (markId && attendanceCache.markSet.has(markId)) {
+          signed_count += 1
+          cache_skip_count += 1
+          continue
+        }
+
         await common.sleep(2000)
         try {
           const res = await sklUser.sklReq.getData('endfield_attendance')
@@ -190,10 +323,18 @@ export class EndfieldAttendance extends plugin {
 
           if (res.data?.already_signed) {
             signed_count += 1
+            if (markId) {
+              attendanceCache.markSet.add(markId)
+              cacheDirty = true
+            }
             continue
           }
 
           success_count += 1
+          if (markId) {
+            attendanceCache.markSet.add(markId)
+            cacheDirty = true
+          }
         } catch (err) {
           fail_count += 1
           fail_users.push({ user_id, sklUser, reason: err?.message || '签到异常' })
@@ -215,6 +356,7 @@ export class EndfieldAttendance extends plugin {
         await common.sleep(3000)
         try {
           const res = await failItem.sklUser.sklReq.getData('endfield_attendance')
+          const markId = getAttendanceMarkId(failItem.user_id, failItem.sklUser)
 
           if (!res || res.code !== 0) {
             retry_fail_users.push(failItem)
@@ -224,11 +366,19 @@ export class EndfieldAttendance extends plugin {
           if (res.data?.already_signed) {
             signed_count += 1
             fail_count -= 1
+            if (markId) {
+              attendanceCache.markSet.add(markId)
+              cacheDirty = true
+            }
             continue
           }
 
           success_count += 1
           fail_count -= 1
+          if (markId) {
+            attendanceCache.markSet.add(markId)
+            cacheDirty = true
+          }
           logger.mark(`[终末地插件][签到任务]重试成功: ${failItem.user_id}(${failItem.sklUser.nickname || failItem.sklUser.endfield_uid})`)
         } catch (err) {
           retry_fail_users.push(failItem)
@@ -240,12 +390,31 @@ export class EndfieldAttendance extends plugin {
       fail_users.push(...retry_fail_users)
     }
 
+    if (cacheDirty) {
+      await saveTodayAttendanceMarkSet(attendanceCache.key, attendanceCache.markSet)
+    }
+
+    // 兜底：若出现异常分支导致计数偏差，按结果项反推一次
+    const resultTotal = signed_count + success_count + fail_count
+    if (total_account_count < resultTotal) {
+      total_account_count = resultTotal
+    }
+    const requested_count = Math.max(0, total_account_count - cache_skip_count)
+    const before_signed_count = signed_count
+    const final_signed_count = Math.min(total_account_count, before_signed_count + success_count)
+
     // 格式化报告
     let completeMsg = '[ 签到任务报告 ]\n─────────\n'
-    completeMsg += `总计账号 ${keys.length}\n`
-    completeMsg += `今日已签 ${signed_count}\n`
-    completeMsg += `本次成功 ${success_count}\n`
+    completeMsg += `总计用户 ${keys.length}\n`
+    completeMsg += `总计游戏账号 ${total_account_count}\n`
+    completeMsg += '─────────\n'
+    completeMsg += `执行前已签 ${before_signed_count}\n`
+    completeMsg += `实际请求 ${requested_count}\n`
+    completeMsg += '─────────\n'
+    completeMsg += `本次新签 ${success_count}\n`
     completeMsg += `本次失败 ${fail_count}\n`
+    completeMsg += '─────────\n'
+    completeMsg += `执行后已签 ${final_signed_count} / ${total_account_count}\n`
     completeMsg += '─────────'
     
     const hideFailUserListInGroupManual = is_manual && !!this.e?.isGroup
@@ -257,7 +426,7 @@ export class EndfieldAttendance extends plugin {
       }).join('\n')
     }
 
-    logger.mark(`[终末地插件][签到任务]任务完成：${keys.length}个\n已签：${signed_count}个\n成功：${success_count}个\n失败：${fail_count}个`)
+    logger.mark(`[终末地插件][签到任务]任务完成：用户${keys.length}个 账号${total_account_count}个\n执行前已签：${before_signed_count}个 缓存命中：${cache_skip_count}个 请求：${requested_count}个\n本次新签：${success_count}个 失败：${fail_count}个 执行后已签：${final_signed_count}个`)
 
     await this.sendNotifyList(completeMsg, excludeId)
     

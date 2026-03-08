@@ -2,11 +2,14 @@ import { getMessage } from '../utils/common.js'
 
 /**
  * Redis 清理：移除 ENDFIELD 命名空间下的无用/过期 key
- * 命令：:redis清理（仅管理员）
+ * 命令（仅管理员）：
+ * - :redis清理
+ * - :redis清理账号 <QQ列表>
  */
 
 /** 当前仍在使用的 key 前缀白名单 */
 const VALID_PREFIXES = [
+  // 注意：ENDFIELD:GACHA:SIMULATE:DAILY:* 需按日期判断是否过期，单独由 DAILY_PREFIX 处理
   'ENDFIELD:USER:',
   'ENDFIELD:MAAEND_DEVICES:',
   'ENDFIELD:MAAEND_DEFAULT:',
@@ -18,7 +21,11 @@ const VALID_PREFIXES = [
   'ENDFIELD:GACHA_PENDING:',
   'ENDFIELD:GACHA_LAST_ANALYSIS:',
   'ENDFIELD:PHONE_BIND:',
+  'ENDFIELD:ATTENDANCE_SIGNED:',
 ]
+
+const USER_BIND_KEY_PREFIX = 'ENDFIELD:USER:'
+const CLEAN_ACCOUNT_CMD_PREFIX_REG = /^(?:[:：]|[/#](?:zmd|终末地))redis清理账号\s*/
 
 /** 过期日期型 key（按日期判断是否过期） */
 const DAILY_PREFIX = 'ENDFIELD:GACHA:SIMULATE:DAILY:'
@@ -49,6 +56,48 @@ function isValidKey(key) {
   return false
 }
 
+/**
+ * 从命令文本中提取待清理的 QQ 号（每行首个数字）。
+ * 支持：
+ *   :redis清理账号 123456789
+ *   :redis清理账号\n123456789(昵称)\n987654321(昵称)
+ */
+function parseTargetUserIds(msg = '') {
+  const raw = String(msg || '')
+  const payload = raw.replace(CLEAN_ACCOUNT_CMD_PREFIX_REG, '').trim()
+  if (!payload) return []
+
+  // 兼容不同端发送的换行符：\n / \r\n / U+2028 / U+2029
+  const normalized = payload
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\u2028\u2029]/g, '\n')
+
+  const ids = []
+  const seen = new Set()
+  const pushId = (userId) => {
+    if (!userId || seen.has(userId)) return
+    seen.add(userId)
+    ids.push(userId)
+  }
+
+  for (const lineRaw of normalized.split('\n')) {
+    const line = lineRaw.trim()
+    if (!line) continue
+    // 每行取首个 QQ 号，兼容 "1.123456(昵称)" 等前缀
+    const match = line.match(/(\d{5,12})(?!\d)/)
+    if (match) pushId(match[1])
+  }
+
+  // 兜底：若仍只提取到很少数据，则从全文抓取所有 QQ 号
+  // 可兼容少数客户端把“多行”压成单行的情况
+  if (ids.length <= 1) {
+    const fallback = normalized.match(/\d{5,12}(?!\d)/g) || []
+    for (const userId of fallback) pushId(userId)
+  }
+
+  return ids
+}
+
 export class EndfieldRedisClean extends plugin {
   constructor() {
     super({
@@ -57,6 +106,11 @@ export class EndfieldRedisClean extends plugin {
       event: 'message',
       priority: 50,
       rule: [
+        {
+          reg: '^(?:[:：]|[/#](?:zmd|终末地))redis清理账号(?:\\s+[\\s\\S]+)?$',
+          fnc: 'cleanUserBindings',
+          permission: 'master'
+        },
         {
           reg: '^(?:[:：]|[/#](?:zmd|终末地))redis清理$',
           fnc: 'cleanRedis',
@@ -179,6 +233,63 @@ export class EndfieldRedisClean extends plugin {
     } catch {
       for (const m of msgs) await this.reply(m.message)
     }
+    return true
+  }
+
+  async cleanUserBindings() {
+    if (!this.e?.isMaster) return false
+    if (!redis) {
+      await this.reply(getMessage('redis_clean.redis_unavailable'))
+      return true
+    }
+
+    const targetUserIds = parseTargetUserIds(this.e?.msg || '')
+    if (targetUserIds.length === 0) {
+      await this.reply(
+        '请提供要清理的账号（每行一个 QQ 号）。\n示例：\n:redis清理账号 1637608752\n或\n:redis清理账号\n1637608752(苹果金凤梨)'
+      )
+      return true
+    }
+
+    const deletedIds = []
+    const notFoundIds = []
+    const failedItems = []
+
+    for (const userId of targetUserIds) {
+      const key = `${USER_BIND_KEY_PREFIX}${userId}`
+      try {
+        const result = await redis.del(key)
+        if (Number(result) > 0) {
+          deletedIds.push(userId)
+        } else {
+          notFoundIds.push(userId)
+        }
+      } catch (err) {
+        failedItems.push({ userId, err: err?.message || String(err) })
+      }
+    }
+
+    const report = [
+      '【Redis 账号清理完成】',
+      `目标账号：${targetUserIds.length}`,
+      `已删除：${deletedIds.length}`,
+      `未命中：${notFoundIds.length}`,
+      `失败：${failedItems.length}`
+    ]
+
+    if (deletedIds.length > 0) {
+      report.push('', '已删除 QQ：', deletedIds.join('\n'))
+    }
+    if (notFoundIds.length > 0) {
+      report.push('', '未命中 QQ：', notFoundIds.join('\n'))
+    }
+    if (failedItems.length > 0) {
+      const lines = failedItems.slice(0, 20).map(item => `${item.userId} (${item.err})`)
+      if (failedItems.length > 20) lines.push(`... 及其他 ${failedItems.length - 20} 个`)
+      report.push('', '失败明细：', lines.join('\n'))
+    }
+
+    await this.reply(report.join('\n'))
     return true
   }
 }

@@ -17,6 +17,39 @@ const META_ATTRPANLE_DIR = path.join(_meta, 'attrpanle')
 const META_PHASES_DIR = path.join(_meta, 'phases')
 const LIST_BG_FILES = ['bg1.png', 'bg2.png']
 
+function isApiSuccess(res) {
+  if (!res || typeof res !== 'object') return false
+  const code = res.code
+  if (typeof code === 'number') return code === 0
+  if (typeof code === 'string') return code.trim() === '0'
+  return res.success === true
+}
+
+function pickPanelSyncFailedReason(statusRes) {
+  const data = statusRes?.data || {}
+  const candidates = [
+    data?.error_message,
+    data?.error,
+    data?.reason,
+    data?.fail_reason,
+    data?.message,
+    statusRes?.error,
+    statusRes?.msg
+  ]
+  for (const item of candidates) {
+    const text = String(item || '').trim()
+    if (!text) continue
+    const lower = text.toLowerCase()
+    if (lower === '成功' || lower === 'success' || lower === 'ok') continue
+    return text
+  }
+  const failedIds = Array.isArray(data?.failed_ids) ? data.failed_ids : []
+  if (failedIds.length > 0) {
+    return `同步失败，失败角色 ${failedIds.length} 个`
+  }
+  return '同步失败'
+}
+
 
 function iconToDataUrl(dir, chineseName) {
   if (!chineseName || typeof chineseName !== 'string') return ''
@@ -295,7 +328,7 @@ export class EndfieldOperator extends plugin {
       const serverId = Number(sklUser.server_id || 1)
       const res = await sklUser.sklReq.getData('note', { roleId, serverId })
       
-      if (!res || res.code !== 0) {
+      if (!isApiSuccess(res)) {
         logger.error(`[终末地干员]获取干员列表失败: ${JSON.stringify(res)}`)
         await this.reply(getMessage('common.get_role_failed'))
         return true
@@ -332,7 +365,7 @@ export class EndfieldOperator extends plugin {
       let friendCharTemplateId = ''
       try {
         const payload = friendDetailRes?.data || {}
-        const friendData = friendDetailRes?.code === 0 ? payload : (payload?.data || payload)
+        const friendData = isApiSuccess(friendDetailRes) ? payload : (payload?.data || payload)
         friendRoleId = String(friendData?.role_profile?.role_id || friendData?.role_profile?.roleId || '').trim()
 
         const friendChars = friendData?.role_profile?.char_data || []
@@ -361,13 +394,13 @@ export class EndfieldOperator extends plugin {
       try {
         if (friendCharResRaw) {
           const payload = friendCharResRaw?.data || {}
-          friendCharData = friendCharResRaw?.code === 0 ? payload : (payload?.data || payload)
+          friendCharData = isApiSuccess(friendCharResRaw) ? payload : (payload?.data || payload)
         }
       } catch (err) {
         friendCharData = null
       }
 
-      if (!operatorRes || operatorRes.code !== 0) {
+      if (!isApiSuccess(operatorRes)) {
         logger.error(`[终末地干员]获取干员详情失败: ${JSON.stringify(operatorRes)}`)
         await this.reply(getMessage('operator.get_detail_failed'))
         return true
@@ -527,7 +560,7 @@ export class EndfieldOperator extends plugin {
     const roleId = String(sklUser.endfield_uid || '')
     const serverId = Number(sklUser.server_id || 1)
     const res = await sklUser.sklReq.getData('note', { roleId, serverId })
-    if (!res || res.code !== 0) {
+    if (!isApiSuccess(res)) {
       logger.error(`[终末地干员]获取角色信息失败: ${JSON.stringify(res)}`)
       await this.reply(getMessage('common.get_role_failed'))
       return null
@@ -555,60 +588,64 @@ export class EndfieldOperator extends plugin {
         sklUser.framework_token = String(options.frameworkToken)
         sklUser.sklReq.setFrameworkToken(String(options.frameworkToken))
       }
-      // 1) 触发面板同步（异步任务）
-      const syncRes = await sklUser.sklReq.getData('panel_sync')
-      if (!syncRes || syncRes.code !== 0) {
-        const msg = syncRes?.message || '触发同步失败'
-        if (!options.silent) await this.reply(getMessage('common.query_failed', { error: msg }))
-        return options.retImage ? null : true
-      }
+      // 1) 尝试触发面板同步（失败时降级到实时数据，不中断命令）
+      const allSyncedChars = []
+      let syncCompleted = false
+      let syncFailedReason = ''
 
-      // 2) 轮询同步状态
-      const maxPoll = 90
-      let completed = false
-      let lastStatus = ''
-      for (let i = 0; i < maxPoll; i++) {
-        await this.sleep(2000)
-        const statusRes = await sklUser.sklReq.getData('panel_sync_status')
-        if (!statusRes || statusRes.code !== 0) continue
-        const status = String(statusRes?.data?.status || '').trim()
-        if (status && status !== lastStatus) {
-          lastStatus = status
-          logger.mark(`[终末地面板同步][${uid}] 状态: ${status}`)
+      const syncRes = await sklUser.sklReq.getData('panel_sync')
+      if (!isApiSuccess(syncRes)) {
+        syncFailedReason = syncRes?.message || '触发同步失败'
+        logger.warn(`[终末地面板同步][${uid}] 触发失败，已降级实时数据：${syncFailedReason}`)
+      } else {
+        // 2) 轮询同步状态
+        const maxPoll = 90
+        let lastStatus = ''
+        for (let i = 0; i < maxPoll; i++) {
+          await this.sleep(2000)
+          const statusRes = await sklUser.sklReq.getData('panel_sync_status')
+          if (!isApiSuccess(statusRes)) continue
+          const status = String(statusRes?.data?.status || '').trim()
+          if (status && status !== lastStatus) {
+            lastStatus = status
+            logger.mark(`[终末地面板同步][${uid}] 状态: ${status}`)
+          }
+          if (status === 'completed' || status === 'idle') {
+            syncCompleted = true
+            break
+          }
+          if (status === 'failed') {
+            syncFailedReason = pickPanelSyncFailedReason(statusRes)
+            logger.error(`[终末地面板同步][${uid}] 状态失败，已降级实时数据: ${JSON.stringify(statusRes)}`)
+            break
+          }
         }
-        if (status === 'completed' || status === 'idle') {
-          completed = true
-          break
+
+        if (!syncCompleted && !syncFailedReason) {
+          syncFailedReason = '同步超时'
+          logger.warn(`[终末地面板同步][${uid}] 轮询超时，已降级实时数据`)
         }
-        if (status === 'failed') {
-          const errMsg = statusRes?.message || '同步失败'
-          if (!options.silent) await this.reply(getMessage('common.query_failed', { error: errMsg }))
-          return options.retImage ? null : true
-        }
-      }
-      if (!completed) {
-        if (!options.silent) await this.reply(getMessage('operator.list_failed'))
-        return options.retImage ? null : true
       }
 
       // 3) 拉取已同步角色列表（分页）
-      const pageSize = 50
-      let page = 1
-      let total = 0
-      const allSyncedChars = []
-      while (true) {
-        const listRes = await sklUser.sklReq.getData('panel_chars', { page, page_size: pageSize })
-        if (!listRes || listRes.code !== 0) {
-          const msg = listRes?.message || '获取同步角色列表失败'
-          if (!options.silent) await this.reply(getMessage('common.query_failed', { error: msg }))
-          return options.retImage ? null : true
+      if (syncCompleted) {
+        const pageSize = 50
+        let page = 1
+        let total = 0
+        while (true) {
+          const listRes = await sklUser.sklReq.getData('panel_chars', { page, page_size: pageSize })
+          if (!isApiSuccess(listRes)) {
+            const msg = listRes?.message || '获取同步角色列表失败'
+            logger.warn(`[终末地面板同步][${uid}] 读取同步列表失败，已降级实时数据：${msg}`)
+            break
+          }
+          const data = listRes.data || {}
+          const rows = Array.isArray(data.synced_chars) ? data.synced_chars : []
+          total = Number(data.total ?? total ?? 0)
+          allSyncedChars.push(...rows)
+          if (allSyncedChars.length >= total || rows.length < pageSize) break
+          page++
         }
-        const data = listRes.data || {}
-        const rows = Array.isArray(data.synced_chars) ? data.synced_chars : []
-        total = Number(data.total ?? total ?? 0)
-        allSyncedChars.push(...rows)
-        if (allSyncedChars.length >= total || rows.length < pageSize) break
-        page++
       }
 
       // 4) 获取全量干员列表，使用同步角色覆盖展示数据
@@ -619,7 +656,7 @@ export class EndfieldOperator extends plugin {
         sklUser.sklReq.getData('friend_detail').catch(() => false)
       ])
 
-      if (!res || res.code !== 0) {
+      if (!isApiSuccess(res)) {
         logger.error(`[终末地干员列表]card/detail 失败: ${JSON.stringify(res)}`)
         if (!options.silent) await this.reply(getMessage('common.get_role_failed'))
         return options.retImage ? null : true
@@ -637,7 +674,7 @@ export class EndfieldOperator extends plugin {
       let friendTemplateCnSet = new Set()
       try {
         const friendPayload = friendDetailRes?.data || {}
-        const friendData = friendDetailRes?.code === 0 ? friendPayload : (friendPayload?.data || friendPayload)
+        const friendData = isApiSuccess(friendDetailRes) ? friendPayload : (friendPayload?.data || friendPayload)
         const friendList = friendData?.role_profile?.char_data || []
         if (Array.isArray(friendList)) {
           friendTemplateCnSet = new Set(friendList.map((x) => String(x?.template?.name_cn || '').trim()).filter(Boolean))
