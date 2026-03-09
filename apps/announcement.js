@@ -8,6 +8,7 @@ import EndfieldRequest from '../model/endfieldReq.js'
 import setting from '../utils/setting.js'
 import Runtime from '../../../lib/plugins/runtime.js'
 import { normalizeCronExpression } from '../utils/cron.js'
+import util from '../../../lib/util.js'
 
 const REDIS_ANNOUNCE_SUB = 'ENDFIELD:ANNOUNCEMENT_SUBSCRIBE'
 const REDIS_ANNOUNCE_LAST_SEEN = 'ENDFIELD:ANNOUNCEMENT_LAST_SEEN'
@@ -99,10 +100,13 @@ function buildDetailRenderData(item, pluResPath) {
     title,
     timeStr,
     timeLabel,
+    imgType: 'png',
+    imgQuality: 100,
     coverUrl: coverUrl || undefined,
     contentHtml,
     captionHtml,
     copyright,
+    // 保留模板中已有的 sys 对象，并注入用于页面缩放的 scale 字段（由调用方 baseOpt 提供或默认）
     sys,
     pageWidth: PAGE_WIDTH,
     ...(pluResPath !== undefined && { pluResPath })
@@ -116,10 +120,79 @@ async function renderAnnouncementDetail(e, item) {
   if (!e?.runtime?.render || !item) return null
   const pluResPath = e?.runtime?.path?.plugin?.['endfield-plugin']?.res || ''
   const { renderData, baseOpt } = buildDetailRenderData(item, pluResPath)
+
+  // 将 baseOpt.scale 注入到渲染数据中，供模板在客户端通过 CSS zoom 放大渲染以提升截图清晰度
   try {
-    return await e.runtime.render('endfield-plugin', 'announcement/detail', renderData, baseOpt)
+    renderData.sys = { ...(renderData.sys || {}), scale: (baseOpt && baseOpt.scale) ? baseOpt.scale : (renderData.sys?.scale || 1) }
   } catch (err) {
-    logger.error(`[终末地插件][公告详情]渲染失败: ${err?.message || err}`)
+    // 忽略注入失败，继续使用默认数据
+  }
+
+  // 在渲染前把可能的远程图片转为内联 base64，以确保 renderer 截图时图片已就绪
+  try {
+    // 处理封面图
+    try {
+      if (renderData.coverUrl && typeof renderData.coverUrl === 'string' && /^https?:\/\//i.test(renderData.coverUrl)) {
+        const file = await util.fileType({ file: renderData.coverUrl })
+        if (file && file.buffer) {
+          const mime = (file.type && file.type.mime) || 'image/png'
+          renderData.coverUrl = `data:${mime};base64,${file.buffer.toString('base64')}`
+        }
+      }
+    } catch (e) {
+      logger.debug('[终末地插件][公告详情] 封面图内联失败，将保留原始地址', e?.message || e)
+    }
+
+    // 处理正文/caption 中的 <img src="..."> 标签，逐个替换为 data URI
+    const imgTagRegex = /<img[^>]+src=(['"])(.*?)\1[^>]*>/gi
+    const replaceRemoteImgs = async (html) => {
+      if (!html || typeof html !== 'string') return html
+      let match
+      const parts = []
+      let lastIndex = 0
+      while ((match = imgTagRegex.exec(html)) !== null) {
+        const full = match[0]
+        const quote = match[1]
+        const src = match[2]
+        const start = match.index
+        parts.push(html.slice(lastIndex, start))
+        lastIndex = start + full.length
+
+        let newSrc = src
+        try {
+          if (/^https?:\/\//i.test(src)) {
+            const file = await util.fileType({ file: src })
+            if (file && file.buffer) {
+              const mime = (file.type && file.type.mime) || 'image/png'
+              newSrc = `data:${mime};base64,${file.buffer.toString('base64')}`
+            }
+          }
+        } catch (e) {
+          logger.debug('[终末地插件][公告详情] 内联正文图片失败，使用原始地址', src, e?.message || e)
+          newSrc = src
+        }
+        const newTag = full.replace(/src=(['"]).*?\1/i, `src=${quote}${newSrc}${quote}`)
+        parts.push(newTag)
+      }
+      parts.push(html.slice(lastIndex))
+      return parts.join('')
+    }
+
+    try {
+      if (renderData.captionHtml) renderData.captionHtml = await replaceRemoteImgs(renderData.captionHtml)
+      if (renderData.contentHtml) renderData.contentHtml = await replaceRemoteImgs(renderData.contentHtml)
+    } catch (e) {
+      logger.debug('[终末地插件][公告详情] 正文图片内联过程中出错', e?.message || e)
+    }
+
+    try {
+      return await e.runtime.render('endfield-plugin', 'announcement/detail', renderData, baseOpt)
+    } catch (err) {
+      logger.error(`[终末地插件][公告详情]渲染失败: ${err?.message || err}`)
+      return null
+    }
+  } catch (err) {
+    logger.error(`[终末地插件][公告详情] 图片处理失败: ${err?.message || err}`)
     return null
   }
 }
@@ -290,8 +363,7 @@ export class announcement extends plugin {
     let imgSegment = null
     try {
       const e = { runtime: new Runtime({}) }
-      const { renderData, baseOpt } = buildDetailRenderData(item)
-      imgSegment = await e.runtime.render('endfield-plugin', 'announcement/detail', renderData, baseOpt)
+      imgSegment = await renderAnnouncementDetail(e, item)
     } catch (err) {
       logger.error(`[终末地插件][公告推送]详情图渲染失败: ${err?.message || err}`)
       return
@@ -424,7 +496,8 @@ export class announcement extends plugin {
           list: listData,
           footerLine1,
           copyright,
-          sys,
+          // 注入默认 sys 并允许在调用处指定放大倍数（用于提高截图分辨率）
+          sys: { ...(sys || {}), scale: 1 },
           pageWidth,
           pluResPath
         }
