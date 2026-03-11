@@ -5,6 +5,28 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循扩展的语义化版本规范（x.y.z 格式）。
 
+## [2.0.8] - 2026-03-11
+
+### changed
+- **干员面板与列表链路优化**
+  - 面板同步列表优先使用 `panel/chars` 返回的 `game_role_id` 对齐 `friend/detail`
+  - 干员名称合并统一以 `card/detail` 中文名为准，提升匹配稳定性
+- **绑定信息与存储整理**
+  - 绑定信息新增 `game_role_id` 透传与存储
+  - 移除 `data/operator.yaml` 本地干员映射依赖
+- **清理旧兼容与冗余逻辑**
+  - 移除旧格式 `notify_list` 兼容转换
+  - 移除旧版抽卡角色选择逻辑与多余等待键
+  - 移除 `endfield_binding` 旧链路回退
+
+### fix
+- **干员列表合并显示异常**
+  - 修复展柜角色绿色高亮匹配不稳定的问题
+
+### docs
+- **Guoba 配置文案补全**
+  - `guoba/message/*` 补全各模块提示文案配置项
+
 ## [2.0.7] - 2026-03-08
 
 ### feat

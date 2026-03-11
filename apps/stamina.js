@@ -134,7 +134,7 @@ export class EndfieldStamina extends plugin {
         : allUsers
 
       if (targetUsers.length === 0) {
-        await this.reply(`未找到 roleId 为 ${targetRoleId} 的绑定账号，请先用「:绑定列表」确认角色ID。`)
+        await this.reply(getMessage('stamina.role_not_found', { roleId: targetRoleId, prefix: ':' }))
         return true
       }
 
@@ -174,7 +174,14 @@ export class EndfieldStamina extends plugin {
 
       // 降级为纯文本
       const textParts = validAccounts.map(a => {
-        return `【${a.userName}】\n理智：${a.current}/${a.max}\n回满时间：${a.fullTime}\n日常活跃：${a.activation}/${a.maxActivation}`
+        const text = '\n' + getMessage('stamina.text_item', {
+          current: a.current,
+          max: a.max,
+          fullTime: a.fullTime,
+          activation: a.activation,
+          maxActivation: a.maxActivation
+        })
+        return getMessage('common.label_line', { label: a.userName, text })
       })
       await this.reply(textParts.join('\n\n'))
       return true
@@ -222,9 +229,9 @@ export class EndfieldStamina extends plugin {
         }
       }
 
-      let fullTime = '未知'
+      let fullTime = getMessage('stamina.full_time_unknown')
       if (current >= max && max > 0) {
-        fullTime = '已满'
+        fullTime = getMessage('stamina.full_time_full')
       } else if (maxTs) {
         fullTime = new Date(maxTs * 1000).toLocaleString('zh-CN')
       } else if (current < max && recover) {
@@ -241,9 +248,9 @@ export class EndfieldStamina extends plugin {
         activation,
         maxActivation,
         userAvatar: noteBase.avatarUrl || '',
-        userName: role.name || noteBase.name || sklUser.nickname || '未知',
+        userName: role.name || noteBase.name || sklUser.nickname || getMessage('common.unknown'),
         userLevel: role.level ?? noteBase.level ?? 0,
-        userUid: role.roleId || noteBase.roleId || sklUser.endfield_uid || '未知',
+        userUid: role.roleId || noteBase.roleId || sklUser.endfield_uid || getMessage('common.unknown'),
         operatorImg
       }
     } catch (err) {
@@ -260,7 +267,13 @@ export class EndfieldStamina extends plugin {
     }
     const data = await this.fetchOneStamina(sklUser)
     if (!data) return { ok: false, msg: getMessage('common.get_role_failed') }
-    const msg = `理智：${data.current}/${data.max}\n回满时间：${data.fullTime}\n日常活跃：${data.activation}/${data.maxActivation}`
+    const msg = getMessage('stamina.text_simple', {
+      current: data.current,
+      max: data.max,
+      fullTime: data.fullTime,
+      activation: data.activation,
+      maxActivation: data.maxActivation
+    })
     return { ok: true, msg, current: data.current, max: data.max }
   }
 
@@ -291,7 +304,10 @@ export class EndfieldStamina extends plugin {
           const shouldPush = threshold > 0 && data.current >= threshold && last < threshold
 
           if (shouldPush) {
-            pushLines.push(`【${data.userName}】理智已达 ${data.current}/${data.max}`)
+            pushLines.push(getMessage('common.label_line', {
+              label: data.userName,
+              text: getMessage('stamina.push_line', { current: data.current, max: data.max })
+            }))
           }
           lastMap[rid] = data.current
         }
@@ -366,7 +382,9 @@ export class EndfieldStamina extends plugin {
     }
     list[idx] = sub
     await this.setStaminaSubList(list)
-    const tip = type === '私信' ? '已改为推送到私信（本人）' : `已改为推送到群聊 ${sub.push_target}`
+    const tip = type === '私信'
+      ? getMessage('stamina.push_setting_private_ok')
+      : getMessage('stamina.push_setting_group_ok', { groupId: sub.push_target })
     await this.reply(tip, false, { at: isGroup })
     return true
   }

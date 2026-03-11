@@ -9,7 +9,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const GACHA_KEYS = {
-  pending: (userId) => `ENDFIELD:GACHA_PENDING:${userId}`,
   lastAnalysis: (userId) => `ENDFIELD:GACHA_LAST_ANALYSIS:${userId}`,
 }
 const SYNC_MS = { pollInterval: 1500, pollTimeout: Infinity }
@@ -64,11 +63,6 @@ export class EndfieldGacha extends plugin {
           reg: '^(?:[:：]|[/#](?:zmd|终末地))同步全部抽卡$',
           fnc: 'syncAllGacha',
           permission: 'master'
-        },
-        {
-          reg: '^(?:[:：]|[/#](?:zmd|终末地))?[1-9]\\d{0,2}$',
-          fnc: 'receiveGachaSelect',
-          log: false
         }
       ]
     })
@@ -576,17 +570,26 @@ export class EndfieldGacha extends plugin {
     }
 
     // 降级纯文本
-    let msg = '【抽卡记录】\n'
-    msg += `角色：${userInfo.nickname || userInfo.game_uid || '未知'} | ${userInfo.channel_name || ''}\n`
-    msg += `总抽数：${stats.total_count ?? 0} | 六星：${stats.star6_count ?? 0} | 五星：${stats.star5_count ?? 0} | 四星：${stats.star4_count ?? 0}\n`
+    const unknown = getMessage('common.unknown')
+    let msg = getMessage('gacha.record_fallback_title') + '\n'
+    msg += getMessage('gacha.record_fallback_user', {
+      name: userInfo.nickname || userInfo.game_uid || unknown,
+      channel: userInfo.channel_name ? ` | ${userInfo.channel_name}` : ''
+    }) + '\n'
+    msg += getMessage('gacha.record_fallback_stats', {
+      total: stats.total_count ?? 0,
+      star6: stats.star6_count ?? 0,
+      star5: stats.star5_count ?? 0,
+      star4: stats.star4_count ?? 0
+    }) + '\n'
     for (const sec of poolSections) {
-      msg += `\n【${sec.label}】共 ${sec.total} 抽\n`
+      msg += '\n' + getMessage('gacha.record_section_header', { label: sec.label, total: sec.total }) + '\n'
       if (sec.hasRecords) {
         sec.records.forEach((r) => {
-          msg += `${r.index}. ★${r.rarity} ${r.name}\n`
+          msg += getMessage('gacha.record_item_line', { index: r.index, rarity: r.rarity, name: r.name }) + '\n'
         })
       } else {
-        msg += '暂无记录\n'
+        msg += getMessage('gacha.record_empty') + '\n'
       }
     }
     await this.reply(msg)
@@ -1349,14 +1352,25 @@ export class EndfieldGacha extends plugin {
     }
 
     let msg = options.syncMsg ? options.syncMsg + '\n\n' : ''
-    msg += '【抽卡分析】\n'
-    msg += `角色：${userInfo.nickname || userInfo.game_uid || '未知'} · ${userInfo.channel_name || ''}\n`
+    msg += getMessage('gacha.analysis_fallback_title') + '\n'
+    msg += getMessage('gacha.analysis_fallback_user', {
+      name: userInfo.nickname || userInfo.game_uid || getMessage('common.unknown'),
+      channel: userInfo.channel_name ? ` · ${userInfo.channel_name}` : ''
+    }) + '\n'
     for (const group of poolGroups) {
       for (const p of group.pools) {
-        msg += `${group.label} · ${p.poolName}：${p.total} 抽 | ${p.metric1Label} ${p.metric1} | ${p.metric2Label} ${p.metric2}\n`
+        msg += getMessage('gacha.analysis_fallback_line', {
+          group: group.label,
+          pool: p.poolName,
+          total: p.total,
+          metric1Label: p.metric1Label,
+          metric1: p.metric1,
+          metric2Label: p.metric2Label,
+          metric2: p.metric2
+        }) + '\n'
       }
     }
-    msg += `查看最近记录：${prefix}抽卡记录`
+    msg += getMessage('gacha.analysis_fallback_recent_hint', { prefix })
     await this.reply(msg, false, options.syncMsg ? { at: !!this.e.isGroup } : {})
     await redis.set(GACHA_KEYS.lastAnalysis(this.e.user_id), String(Date.now()), { EX: 900 })
     return true
@@ -1390,7 +1404,7 @@ export class EndfieldGacha extends plugin {
   formatProgressMsg(msg, userId, qqName) {
     if (!msg || typeof msg !== 'string') return msg
     const uid = userId != null ? String(userId) : ''
-    const name = qqName != null && qqName !== '' ? String(qqName) : uid || '用户'
+    const name = qqName != null && qqName !== '' ? String(qqName) : uid || getMessage('common.user')
     return msg.replace(/\{qq号\}/g, uid).replace(/\{qqname\}/g, name)
   }
 
@@ -1409,8 +1423,8 @@ export class EndfieldGacha extends plugin {
   }
 
   formatGlobalStatsSyncTime(cached, lastUpdate) {
-    if (cached === true) return '缓存约5分钟'
-    if (!lastUpdate) return '刚刚'
+    if (cached === true) return getMessage('gacha.global_stats_cached_short')
+    if (!lastUpdate) return getMessage('gacha.global_stats_just_now')
     try {
       const d = new Date(lastUpdate)
       if (Number.isNaN(d.getTime())) return String(lastUpdate)
@@ -1499,7 +1513,8 @@ export class EndfieldGacha extends plugin {
       return true
     }
 
-    let periodLabel = '当期UP'
+    const currentPeriodLabel = getMessage('gacha.global_stats_current_period')
+    let periodLabel = currentPeriodLabel
     if (charName) {
       const found = this.findGlobalStatsPeriod(data.stats.pool_periods || [], charName)
       if (!found) {
@@ -1516,7 +1531,7 @@ export class EndfieldGacha extends plugin {
       const currentPoolName = data.stats.current_pool?.pool_name
       if (currentPoolName) {
         data = await hypergryphAPI.getGachaGlobalStats(currentPoolName)
-        if (data?.stats) periodLabel = '当期UP'
+        if (data?.stats) periodLabel = currentPeriodLabel
       }
     }
 
@@ -1621,19 +1636,32 @@ export class EndfieldGacha extends plugin {
       }
     }
 
-    let text = '【全服抽卡统计】'
-    if (periodLabel !== '当期UP') text += ` · ${periodLabel}`
+    let text = getMessage('gacha.global_stats_fallback_title')
+    if (periodLabel !== getMessage('gacha.global_stats_current_period')) text += ` · ${periodLabel}`
     text += '\n'
-    text += `总抽数：${totalPulls} | 统计用户：${totalUsers}\n`
-    text += `六星：${star6} | 五星：${star5} | 四星：${star4} | 平均出货：${avgPity} 抽\n`
-    text += `当前UP：${upName}\n`
+    text += getMessage('gacha.global_stats_fallback_summary', { total: totalPulls, users: totalUsers }) + '\n'
+    text += getMessage('gacha.global_stats_fallback_stars', {
+      star6,
+      star5,
+      star4,
+      avgPity
+    }) + '\n'
+    text += getMessage('gacha.global_stats_fallback_up', { upName }) + '\n'
     if (officialRaw || bilibiliRaw) {
-      if (officialRaw) text += `官服：${officialRaw.total_users ?? 0} 人，${officialRaw.total_pulls ?? 0} 抽，均出 ${fmt(officialRaw.avg_pity)}\n`
-      if (bilibiliRaw) text += `B服：${bilibiliRaw.total_users ?? 0} 人，${bilibiliRaw.total_pulls ?? 0} 抽，均出 ${fmt(bilibiliRaw.avg_pity)}\n`
+      if (officialRaw) text += getMessage('gacha.global_stats_fallback_official', {
+        users: officialRaw.total_users ?? 0,
+        pulls: officialRaw.total_pulls ?? 0,
+        avg: fmt(officialRaw.avg_pity)
+      }) + '\n'
+      if (bilibiliRaw) text += getMessage('gacha.global_stats_fallback_bili', {
+        users: bilibiliRaw.total_users ?? 0,
+        pulls: bilibiliRaw.total_pulls ?? 0,
+        avg: fmt(bilibiliRaw.avg_pity)
+      }) + '\n'
     }
-    text += '\n发送 :全服抽卡统计 <干员名> 可查看其他期数\n'
-    if (data.cached === true) text += '（缓存约 5 分钟）'
-    else if (data.last_update) text += `更新时间：${data.last_update}`
+    text += '\n' + getMessage('gacha.global_stats_fallback_hint') + '\n'
+    if (data.cached === true) text += getMessage('gacha.global_stats_fallback_cache')
+    else if (data.last_update) text += getMessage('gacha.global_stats_fallback_update', { time: data.last_update })
     await this.reply(text)
     return true
   }
@@ -1743,16 +1771,25 @@ export class EndfieldGacha extends plugin {
     const statusData = await hypergryphAPI.getGachaSyncStatus(token, query)
     if (statusData?.status === 'syncing') {
       const { message, progress, stage, current_pool, records_found, completed_pools, total_pools, elapsed_seconds } = statusData
-      const rawMsg = message || (current_pool ? `正在查询${current_pool}...` : '')
+      const rawMsg = message || (current_pool ? getMessage('gacha.sync_query_pool', { pool: current_pool }) : '')
       const progressMsg = this.formatProgressMsg(rawMsg, this.e.user_id, this.e.sender?.nickname || this.e.sender?.card)
-      if (progressMsg) logger.mark(`[终末地插件][抽卡同步] ${progressMsg}`)
-      const stageLabel = { grant: '验证 Token', bindings: '获取绑定账号', u8token: '获取访问凭证', records: '获取抽卡记录', saving: '保存数据' }[stage] || stage || ''
+      const stageLabel = {
+        grant: getMessage('gacha.sync_stage_grant'),
+        bindings: getMessage('gacha.sync_stage_bindings'),
+        u8token: getMessage('gacha.sync_stage_u8token'),
+        records: getMessage('gacha.sync_stage_records'),
+        saving: getMessage('gacha.sync_stage_saving')
+      }[stage] || stage || ''
       let msg = getMessage('gacha.sync_in_progress') + '\n'
-      msg += `进度：${progress ?? 0}%`
-      if (total_pools != null && completed_pools != null) msg += ` | 卡池 ${completed_pools}/${total_pools}`
-      if (records_found != null) msg += ` | 已获取 ${records_found} 条`
-      if (elapsed_seconds != null) msg += ` | 已用 ${Math.round(elapsed_seconds)} 秒`
-      if (stageLabel) msg += `\n阶段：${stageLabel}`
+      msg += getMessage('gacha.sync_progress_line', {
+        progress: progress ?? 0,
+        pools: (total_pools != null && completed_pools != null)
+          ? getMessage('gacha.sync_progress_pools', { completed: completed_pools, total: total_pools })
+          : '',
+        records: records_found != null ? getMessage('gacha.sync_progress_records', { records: records_found }) : '',
+        elapsed: elapsed_seconds != null ? getMessage('gacha.sync_progress_elapsed', { seconds: Math.round(elapsed_seconds) }) : ''
+      })
+      if (stageLabel) msg += '\n' + getMessage('gacha.sync_progress_stage', { stage: stageLabel })
       await this.reply(msg)
       return true
     }
@@ -1813,50 +1850,6 @@ export class EndfieldGacha extends plugin {
     return { error: getMessage('gacha.no_accounts') }
   }
 
-  /** 兼容历史“序号选择账号”流程：新流程已改为当前激活绑定直连，此处仅处理旧 pending */
-  async receiveGachaSelect() {
-    const raw = await redis.get(GACHA_KEYS.pending(this.e.user_id))
-    if (!raw) return false // 无待选状态时不消费消息，让其他插件处理
-    let data
-    try {
-      data = JSON.parse(raw)
-    } catch {
-      await redis.del(GACHA_KEYS.pending(this.e.user_id))
-      return true
-    }
-    const msg = (this.e.msg || '').trim().replace(/^(?:[:：]|[/#](?:zmd|终末地))\s*/, '')
-    const index = parseInt(msg, 10)
-    if (!Number.isFinite(index) || index < 1 || index > (data.accounts?.length || 0)) {
-      await this.reply(getMessage('gacha.invalid_index'))
-      return true
-    }
-    await redis.del(GACHA_KEYS.pending(this.e.user_id))
-    await this.reply(getMessage('gacha.account_selected'))
-    const account = data.accounts[index - 1]
-    const selectedUid = account?.uid || null
-    const selectedRoleId = this.getAccountRoleId(account)
-    const selectedServerId = this.getAccountServerId(account)
-    const targetUserId = data.target_user_id || this.e.user_id
-    const qqName = this.e.sender?.nickname || this.e.sender?.card || String(this.e.user_id)
-    
-    // 用户选择账号后，发送开始同步提示
-    if (data.fromSync || data.fromAnalysis) {
-      const isFirstSync = data.isFirstSync ?? false
-      if (data.fromAnalysis) {
-        await this.reply(getMessage('gacha.analysis_sync_start'))
-      } else {
-        await this.reply(getMessage(isFirstSync ? 'gacha.auth_full_sync' : 'gacha.sync_start'))
-      }
-    }
-    
-    await this.startFetchAndPoll(data.token, selectedUid, selectedRoleId, selectedServerId, targetUserId, qqName, {
-      afterSyncSendAnalysis: data.afterSyncSendAnalysis,
-      fromAnalysis: data.fromAnalysis,
-      fromSync: data.fromSync
-    })
-    return true
-  }
-
   /**
    * 启动同步任务并轮询直到 completed / failed
    * 同步流程：当前激活绑定 -> fetch(role_id/server_id) -> status 轮询 -> records 落本地缓存
@@ -1910,11 +1903,10 @@ export class EndfieldGacha extends plugin {
         if (!statusData) continue
         const { status, message, records_found, new_records, error, current_pool } = statusData
         if (status === 'syncing' && (message || current_pool)) {
-          const rawMsg = message || (current_pool ? `正在查询${current_pool}...` : '')
+          const rawMsg = message || (current_pool ? getMessage('gacha.sync_query_pool', { pool: current_pool }) : '')
           const progressMsg = this.formatProgressMsg(rawMsg, userId, qqName)
           if (progressMsg && progressMsg !== lastProgressMessage) {
             lastProgressMessage = progressMsg
-            logger.mark(`[终末地插件][抽卡同步] ${progressMsg}`)
           }
         }
         if (status === 'completed') {
@@ -1925,10 +1917,10 @@ export class EndfieldGacha extends plugin {
           const stats = statsData?.stats || {}
           if (stats.limited_char_count != null || stats.standard_char_count != null || stats.beginner_char_count != null || stats.weapon_count != null) {
             const parts = []
-            if (stats.limited_char_count != null) parts.push(`限定池 ${stats.limited_char_count} 条`)
-            if (stats.standard_char_count != null) parts.push(`常驻池 ${stats.standard_char_count} 条`)
-            if (stats.beginner_char_count != null) parts.push(`新手池 ${stats.beginner_char_count} 条`)
-            if (stats.weapon_count != null) parts.push(`武器池 ${stats.weapon_count} 条`)
+            if (stats.limited_char_count != null) parts.push(getMessage('gacha.sync_done_pool_limited', { count: stats.limited_char_count }))
+            if (stats.standard_char_count != null) parts.push(getMessage('gacha.sync_done_pool_standard', { count: stats.standard_char_count }))
+            if (stats.beginner_char_count != null) parts.push(getMessage('gacha.sync_done_pool_beginner', { count: stats.beginner_char_count }))
+            if (stats.weapon_count != null) parts.push(getMessage('gacha.sync_done_pool_weapon', { count: stats.weapon_count }))
             if (parts.length) poolLine = '\n' + getMessage('gacha.sync_done_pools', { pools: parts.join(' | ') }).trim()
           }
           const syncDoneMsg = getMessage('gacha.sync_done', {

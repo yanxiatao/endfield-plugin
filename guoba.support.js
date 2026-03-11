@@ -84,18 +84,6 @@ export function supportGuoba() {
           },
           signConfig
         )
-        // 兼容旧版 notify_list 为数组格式
-        if (Array.isArray(sign.notify_list)) {
-          const friend = []
-          const group = []
-          for (const raw of sign.notify_list) {
-            const str = String(raw).trim()
-            const lower = str.toLowerCase()
-            if (lower.startsWith('group:')) group.push(str.slice(6).trim())
-            else if (lower.startsWith('friend:')) friend.push(str.slice(7).trim())
-          }
-          sign.notify_list = { friend, group }
-        }
         if (!sign.notify_list?.friend) sign.notify_list = { ...sign.notify_list, friend: [] }
         if (!sign.notify_list?.group) sign.notify_list = { ...sign.notify_list, group: [] }
         

@@ -12,9 +12,9 @@ const SIMULATE_KEYS = {
 /** 模拟抽卡卡池：关键词→key，key→label */
 const SIMULATE = (() => {
   const pools = [
-    { key: 'limited', keywords: ['UP', '限定'], label: 'UP池' },
-    { key: 'standard', keywords: ['常驻'], label: '常驻池' },
-    { key: 'weapon', keywords: ['武器'], label: '武器池' }
+    { key: 'limited', keywords: ['UP', '限定'], label: getMessage('gacha_simulate.pool_limited') },
+    { key: 'standard', keywords: ['常驻'], label: getMessage('gacha_simulate.pool_standard') },
+    { key: 'weapon', keywords: ['武器'], label: getMessage('gacha_simulate.pool_weapon') }
   ]
   const byKeyword = Object.fromEntries(pools.flatMap((p) => p.keywords.map((k) => [k, p.key])))
   const label = (key) => pools.find((p) => p.key === key)?.label || key
@@ -215,9 +215,13 @@ export class EndfieldGachaSimulate extends plugin {
     const hardCur = n(state.guaranteed_limited_pity)
 
     const pityPanel = {
-      six: mkPity(sixCur, sixMax, { probText: `当前概率：${(curProb * 100).toFixed(2)}%` }),
-      guaranteedUpText: state.is_guaranteed_up == null ? '未触发' : state.is_guaranteed_up ? '已触发' : '未触发',
-      hard: hasHard ? mkPity(hardCur, hardMax, { label: `${hardMax}抽硬保底` }) : null
+      six: mkPity(sixCur, sixMax, { probText: getMessage('gacha_simulate.pity_prob_text', { pct: (curProb * 100).toFixed(2) }) }),
+      guaranteedUpText: state.is_guaranteed_up == null
+        ? getMessage('gacha_simulate.guaranteed_up_off')
+        : state.is_guaranteed_up
+          ? getMessage('gacha_simulate.guaranteed_up_on')
+          : getMessage('gacha_simulate.guaranteed_up_off'),
+      hard: hasHard ? mkPity(hardCur, hardMax, { label: getMessage('gacha_simulate.hard_pity_label', { count: hardMax }) }) : null
     }
 
     const sixCount = n(state.six_star_count ?? stats.six_star_count ?? stats.six_star)
@@ -226,16 +230,16 @@ export class EndfieldGachaSimulate extends plugin {
     const upRate = sixCount > 0 ? ((upSixCount / sixCount) * 100).toFixed(2) : (stats.up_rate != null ? Number(stats.up_rate) : null)
     const pctSub = (part, total) => (total ? `${((part / total) * 100).toFixed(2)}%` : '')
     const summaryCards = {
-      total: { label: '总抽数', value: totalPulls ?? '-', sub: '' },
-      six: { label: '6星数', value: sixCount, sub: pctSub(sixCount, totalPulls) },
-      five: { label: '5星数', value: fiveCount, sub: pctSub(fiveCount, totalPulls) },
-      notWai: { label: '不歪率', value: upRate != null ? `${upRate}%` : '-', sub: upRate != null ? `${upSixCount} UP` : '' }
+      total: { label: getMessage('gacha_simulate.summary_total_label'), value: totalPulls ?? '-', sub: '' },
+      six: { label: getMessage('gacha_simulate.summary_star6_label'), value: sixCount, sub: pctSub(sixCount, totalPulls) },
+      five: { label: getMessage('gacha_simulate.summary_star5_label'), value: fiveCount, sub: pctSub(fiveCount, totalPulls) },
+      notWai: { label: getMessage('gacha_simulate.summary_not_wai_label'), value: upRate != null ? `${upRate}%` : '-', sub: upRate != null ? `${upSixCount} ${getMessage('gacha_simulate.tag_up')}` : '' }
     }
 
     let renderData = {
       mode,
       title: payload.title,
-      subtitle: payload.poolLabel ? `卡池：${payload.poolLabel}` : undefined,
+      subtitle: payload.poolLabel ? getMessage('gacha_simulate.pool_subtitle', { pool: payload.poolLabel }) : undefined,
       pageWidth,
       pluResPath: pluResPath || undefined,
       pityPanel,
@@ -247,8 +251,8 @@ export class EndfieldGachaSimulate extends plugin {
       renderData.result = {
         pull_number: r.pull_number,
         rarity: r.rarity,
-        starLabel: r.rarity === 6 ? '★6' : r.rarity === 5 ? '★5' : '★4',
-        tag: r.rarity === 6 && r.is_up ? 'UP' : r.rarity === 6 && !r.is_up ? '歪' : '',
+        starLabel: r.rarity === 6 ? getMessage('gacha_simulate.star_6') : r.rarity === 5 ? getMessage('gacha_simulate.star_5') : getMessage('gacha_simulate.star_4'),
+        tag: r.rarity === 6 && r.is_up ? getMessage('gacha_simulate.tag_up') : r.rarity === 6 && !r.is_up ? getMessage('gacha_simulate.tag_off') : '',
         tagClass: r.rarity === 6 && r.is_up ? 'up' : r.rarity === 6 && !r.is_up ? 'wai' : '',
         pity_when_pulled: r.pity_when_pulled,
         cover: charInfo.cover || '',
@@ -260,8 +264,8 @@ export class EndfieldGachaSimulate extends plugin {
         return {
           pull_number: r.pull_number,
           rarity: r.rarity,
-          starLabel: r.rarity === 6 ? '★6' : r.rarity === 5 ? '★5' : '★4',
-          tag: r.rarity === 6 && r.is_up ? 'UP' : r.rarity === 6 && !r.is_up ? '歪' : '',
+          starLabel: r.rarity === 6 ? getMessage('gacha_simulate.star_6') : r.rarity === 5 ? getMessage('gacha_simulate.star_5') : getMessage('gacha_simulate.star_4'),
+          tag: r.rarity === 6 && r.is_up ? getMessage('gacha_simulate.tag_up') : r.rarity === 6 && !r.is_up ? getMessage('gacha_simulate.tag_off') : '',
           tagClass: r.rarity === 6 && r.is_up ? 'up' : r.rarity === 6 && !r.is_up ? 'wai' : '',
           cover: charInfo.cover || '',
           charName: charInfo.name || ''
@@ -296,12 +300,13 @@ export class EndfieldGachaSimulate extends plugin {
     await this.saveSimulateState(scope, poolType, data.state || null)
     await this.incrementSimulateDailyUsage(scope, poolType)
     const r = data.result
-    const star = r.rarity === 6 ? '★6' : r.rarity === 5 ? '★5' : '★4'
-    const tag = r.rarity === 6 && r.is_up ? ' UP' : r.rarity === 6 && !r.is_up ? ' 歪' : ''
-    let msg = `【模拟单抽】${star}${tag}\n`
-    if (r.rarity === 6 && r.pity_when_pulled != null) msg += `第 ${r.pull_number} 抽出货（垫了 ${r.pity_when_pulled} 抽）`
-    else msg += `第 ${r.pull_number} 抽`
-    const img = await this.renderSimulateResult('single', { title: '模拟单抽', result: r, poolType, poolLabel, state: data.state, stats: data.stats })
+    const star = r.rarity === 6 ? getMessage('gacha_simulate.star_6') : r.rarity === 5 ? getMessage('gacha_simulate.star_5') : getMessage('gacha_simulate.star_4')
+    const tag = r.rarity === 6 && r.is_up ? ` ${getMessage('gacha_simulate.tag_up')}` : r.rarity === 6 && !r.is_up ? ` ${getMessage('gacha_simulate.tag_off')}` : ''
+    const title = getMessage('gacha_simulate.title_single')
+    let msg = getMessage('gacha_simulate.msg_single_header', { title, star, tag }) + '\n'
+    if (r.rarity === 6 && r.pity_when_pulled != null) msg += getMessage('gacha_simulate.msg_single_detail_pity', { pull: r.pull_number, pity: r.pity_when_pulled })
+    else msg += getMessage('gacha_simulate.msg_single_detail', { pull: r.pull_number })
+    const img = await this.renderSimulateResult('single', { title, result: r, poolType, poolLabel, state: data.state, stats: data.stats })
     await this.reply(img || msg)
     return true
   }
@@ -325,18 +330,25 @@ export class EndfieldGachaSimulate extends plugin {
     let star6Count = 0
     let upCount = 0
     const lines = data.results.map((r) => {
-      const star = r.rarity === 6 ? '★6' : r.rarity === 5 ? '★5' : '★4'
-      const tag = r.rarity === 6 && r.is_up ? ' UP' : r.rarity === 6 && !r.is_up ? ' 歪' : ''
+      const star = r.rarity === 6 ? getMessage('gacha_simulate.star_6') : r.rarity === 5 ? getMessage('gacha_simulate.star_5') : getMessage('gacha_simulate.star_4')
+      const tag = r.rarity === 6 && r.is_up ? ` ${getMessage('gacha_simulate.tag_up')}` : r.rarity === 6 && !r.is_up ? ` ${getMessage('gacha_simulate.tag_off')}` : ''
       if (r.rarity === 6) {
         star6Count += 1
         if (r.is_up) upCount += 1
       }
-      return `第${r.pull_number}抽 ${star}${tag}`
+      return getMessage('gacha_simulate.msg_line', { pull: r.pull_number, star, tag })
     })
-    let msg = '【模拟十连】\n' + lines.join('\n')
-    if (data.stats) msg += `\n──────────────\n六星：${star6Count} | UP：${upCount} | 总抽数：${data.stats.total_pulls ?? '-'}`
+    const title = getMessage('gacha_simulate.title_ten')
+    let msg = getMessage('gacha_simulate.msg_list_header', { title }) + '\n' + lines.join('\n')
+    if (data.stats) {
+      msg += '\n' + getMessage('gacha_simulate.separator') + '\n' + getMessage('gacha_simulate.msg_summary', {
+        star6: star6Count,
+        up: upCount,
+        total: data.stats.total_pulls ?? '-'
+      })
+    }
     const img = await this.renderSimulateResult('ten', {
-      title: '模拟十连',
+      title,
       results: data.results,
       stats: data.stats,
       star6Count,
@@ -397,13 +409,19 @@ export class EndfieldGachaSimulate extends plugin {
       up_rate: star6Count ? ((upCount / star6Count) * 100).toFixed(2) : null
     }
     const lines = allResults.map((r) => {
-      const star = r.rarity === 6 ? '★6' : r.rarity === 5 ? '★5' : '★4'
-      const tag = r.rarity === 6 && r.is_up ? ' UP' : r.rarity === 6 && !r.is_up ? ' 歪' : ''
-      return `第${r.pull_number}抽 ${star}${tag}`
+      const star = r.rarity === 6 ? getMessage('gacha_simulate.star_6') : r.rarity === 5 ? getMessage('gacha_simulate.star_5') : getMessage('gacha_simulate.star_4')
+      const tag = r.rarity === 6 && r.is_up ? ` ${getMessage('gacha_simulate.tag_up')}` : r.rarity === 6 && !r.is_up ? ` ${getMessage('gacha_simulate.tag_off')}` : ''
+      return getMessage('gacha_simulate.msg_line', { pull: r.pull_number, star, tag })
     })
-    let msg = '【模拟百连】\n' + lines.join('\n') + `\n──────────────\n六星：${star6Count} | UP：${upCount} | 总抽数：100`
+    const title = getMessage('gacha_simulate.title_hundred')
+    let msg = getMessage('gacha_simulate.msg_list_header', { title }) + '\n' + lines.join('\n')
+    msg += '\n' + getMessage('gacha_simulate.separator') + '\n' + getMessage('gacha_simulate.msg_summary', {
+      star6: star6Count,
+      up: upCount,
+      total: 100
+    })
     const img = await this.renderSimulateResult('ten', {
-      title: '模拟百连',
+      title,
       results: allResults,
       stats: { ...stats, total_pulls: 100 },
       star6Count,

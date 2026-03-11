@@ -22,12 +22,13 @@ export class help extends plugin {
     const help_setting = setting.getConfig('help')
     const msgCfg = setting.getConfig('message') || {}
     const cmdPrefix = ':'
+    const prefixTips = getMessage('prefixTips')
     const bluemapHelp = msgCfg.bluemap_help_doc
     const officialWebsite = msgCfg.official_website || 'https://end.shallow.ink'
 
     const helpCfg = {
-      title: '终末地插件帮助',
-      subTitle: getMessage('prefixTips')
+      title: getMessage('help.title'),
+      subTitle: prefixTips
     }
     const { copyright, sys } = getCopyright()
 
@@ -92,18 +93,21 @@ export class help extends plugin {
     } catch (err) {
       logger.error(`[终末地插件][帮助]渲染失败: ${err}`)
       const fallback = [
-        '终末地插件指令帮助（森空岛）',
+        getMessage('help.fallback_title'),
         '',
-        `说明：${prefixTips}`,
+        getMessage('help.fallback_desc', { prefixTips }),
         '',
         ...helpGroup.flatMap((g) => {
           if (g.type === 'tips' && g.items) {
-            return g.items.map((item) => `【${item.title}】${item.text}`).concat([''])
+            return g.items.map((item) => getMessage('common.label_line', { label: item.title, text: item.text })).concat([''])
           }
           if (g.group && !g.list) return [g.group, '']
           return [
-            `${g.group}：`,
-            ...(g.list || []).map((item) => `- ${item.title}${item.desc ? `（${item.desc}）` : ''}`),
+            getMessage('help.fallback_group_line', { group: g.group }),
+            ...(g.list || []).map((item) => getMessage('help.fallback_list_item', {
+              title: item.title,
+              desc: item.desc ? getMessage('help.fallback_list_desc', { desc: item.desc }) : ''
+            })),
             ''
           ]
         })
