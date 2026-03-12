@@ -449,9 +449,8 @@ export class EndfieldUid extends plugin {
     await saveUserBindings(this.e.user_id, accounts)
     // 绑定成功后自动发送干员列表（静默模式，不发加载提示，失败不影响绑定流程）
     try {
-      const operatorInstance = new EndfieldOperator()
-      operatorInstance.e = this.e
-      await operatorInstance.getOperatorList({ silent: true })
+      const current = accounts.find(acc => String(acc.role_id || '') === newRoleId) || newAccount
+      await this.sendOperatorListAfterLogin([current], frameworkToken)
     } catch (err) {
       logger.error(`[终末地插件][绑定]绑定成功后发送干员列表失败: ${err}`)
     }
@@ -593,24 +592,25 @@ export class EndfieldUid extends plugin {
     await saveUserBindings(this.e.user_id, accounts)
     // 多账号登录后按账号生成干员列表，并使用合并转发发送
     try {
-      await this.sendOperatorListForwardByAccounts(currentBatch, frameworkToken)
+      await this.sendOperatorListAfterLogin(currentBatch, frameworkToken)
     } catch (err) {
       logger.error(`[终末地插件][绑定]绑定成功后发送干员列表失败: ${err}`)
     }
     return true
   }
 
-  async sendOperatorListForwardByAccounts(accounts = [], frameworkToken = '') {
+  async sendOperatorListAfterLogin(accounts = [], frameworkToken = '') {
     const targets = (Array.isArray(accounts) ? accounts : [])
-      .filter(acc => acc && acc.role_id)
+      .filter(acc => acc && (acc.role_id || acc.game_role_id))
       .map(acc => ({
         role_id: String(acc.role_id || ''),
+        game_role_id: String(acc.game_role_id || ''),
         server_id: Number(acc.server_id || 1),
         nickname: String(acc.nickname || ''),
         channel_name: String(acc.channel_name || ''),
         framework_token: String(acc.framework_token || frameworkToken || '')
       }))
-      .filter(acc => acc.role_id && acc.framework_token)
+      .filter(acc => (acc.role_id || acc.game_role_id) && acc.framework_token)
 
     if (targets.length === 0) return
 
@@ -618,14 +618,15 @@ export class EndfieldUid extends plugin {
     operatorInstance.e = this.e
     const rendered = []
     for (const acc of targets) {
+      const roleId = acc.game_role_id || acc.role_id
       const img = await operatorInstance.getOperatorList({
         silent: true,
         retImage: true,
         frameworkToken: acc.framework_token,
-        roleId: acc.role_id,
+        roleId,
         serverId: acc.server_id
       })
-      if (img) rendered.push({ ...acc, img })
+      if (img) rendered.push({ ...acc, role_id: roleId, img })
     }
     if (rendered.length === 0) return
 
@@ -692,9 +693,11 @@ export class EndfieldUid extends plugin {
           role
         )
         if (!bindingRes) continue
+        const gameRoleId = bindingRes.game_role_id ?? role.game_role_id ?? role.gameRoleId
         createdBindings.push({
           id: bindingRes.id || bindingRes.binding_id || role.role_id,
           role_id: String(bindingRes.role_id || role.role_id || ''),
+          ...(gameRoleId != null && gameRoleId !== '' ? { game_role_id: String(gameRoleId) } : {}),
           nickname: bindingRes.nickname || role.nickname || '',
           server_id: String(bindingRes.server_id || role.server_id || 1),
           channel_name: bindingRes.channel_name || role.channel_name || '',
@@ -899,9 +902,11 @@ export class EndfieldUid extends plugin {
           role
         )
         if (!bindingRes) continue
+        const gameRoleId = bindingRes.game_role_id ?? role.game_role_id ?? role.gameRoleId
         createdBindings.push({
           id: bindingRes.id || bindingRes.binding_id || role.role_id,
           role_id: String(bindingRes.role_id || role.role_id || ''),
+          ...(gameRoleId != null && gameRoleId !== '' ? { game_role_id: String(gameRoleId) } : {}),
           nickname: bindingRes.nickname || role.nickname || '',
           server_id: String(bindingRes.server_id || role.server_id || 1),
           channel_name: bindingRes.channel_name || role.channel_name || '',
@@ -1405,9 +1410,11 @@ export class EndfieldUid extends plugin {
           role
         )
         if (!bindingRes) continue
+        const gameRoleId = bindingRes.game_role_id ?? role.game_role_id ?? role.gameRoleId
         createdBindings.push({
           id: bindingRes.id || bindingRes.binding_id || role.role_id,
           role_id: String(bindingRes.role_id || role.role_id || ''),
+          ...(gameRoleId != null && gameRoleId !== '' ? { game_role_id: String(gameRoleId) } : {}),
           nickname: bindingRes.nickname || role.nickname || '',
           server_id: String(bindingRes.server_id || role.server_id || 1),
           channel_name: bindingRes.channel_name || role.channel_name || '',
