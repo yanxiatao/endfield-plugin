@@ -265,7 +265,7 @@ export class EndfieldWiki extends plugin {
     for (const bid of blockIds) {
       const block = blockMap[bid]
       if (!block) continue
-      const line = this.renderBlock(block, blockMap)
+      const line = this.renderBlock(block, blockMap, opts)
       if (!line) continue
       if (ganyuanZiliaoOnly && !EndfieldWiki.GANYUAN_ZILIAO_KEYS.test(line.trim())) continue
       lines.push(line)
@@ -297,6 +297,20 @@ export class EndfieldWiki extends plugin {
   renderWikiContent(content) {
     const docMap = content?.document_map || content?.documentMap || {}
     if (!docMap || typeof docMap !== 'object') return ''
+    if (this.isOperatorContent(content)) {
+      const sections = this.buildOperatorSections(content)
+      const lines = []
+      for (const sec of sections) {
+        if (lines.length > 0) {
+          lines.push('────────────')
+          lines.push('')
+        }
+        lines.push(`【${sec.title}】`)
+        lines.push('')
+        lines.push(sec.lines.join('\n'))
+      }
+      return lines.join('\n').replace(/\n{3,}/g, '\n\n')
+    }
     const excludedDocIds = this.getExcludedDocumentIds(content)
     const { chapterGroup } = this.getContentMaps(content)
     const excludeTitles = new Set(EndfieldWiki.EXCLUDED_CHAPTER_TITLES)
@@ -351,6 +365,14 @@ export class EndfieldWiki extends plugin {
     header = header.trim()
 
     const sections = []
+    if (this.isOperatorContent(content)) {
+      const opSections = this.buildOperatorSections(content)
+      for (const sec of opSections) {
+        const contentText = sec.lines.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+        sections.push({ chapterTitle: `【${sec.title}】`, content: contentText })
+      }
+      return { header, sections }
+    }
     for (const ch of chapterGroup) {
       const title = ch?.title || ''
       if (excludeTitles.has(title)) continue
@@ -374,28 +396,48 @@ export class EndfieldWiki extends plugin {
     return { header, sections }
   }
 
-  renderBlock(block, blockMap) {
+  renderBlock(block, blockMap, opts = {}) {
     if (!block) return ''
     switch (block.kind) {
       case 'text': {
         const t = block.text
         const elements = t?.inline_elements || t?.inlineElements || []
         if (!Array.isArray(elements) || elements.length === 0) return ''
-        return elements
-          .map((el) => {
-            if (el.kind === 'text') {
-              if (typeof el.text === 'string') return el.text
-              if (el.text?.text != null) return el.text.text
-              return ''
+        const parts = []
+        for (const el of elements) {
+          if (el.kind === 'text') {
+            const text = typeof el.text === 'string' ? el.text : el.text?.text
+            if (text) parts.push({ text, entry: false })
+            continue
+          }
+          if (el.kind === 'entry') {
+            const entry = el.entry || {}
+            if (entry.name) {
+              parts.push({ text: entry.name, entry: false })
+              continue
             }
-            if (el.kind === 'entry' && el.entry?.name) return el.entry.name
-            if (el.kind === 'link' && el.link?.text) return el.link.text
-            return ''
-          })
-          .filter(Boolean)
-          .join('')
+            if (entry.id) {
+              const text = `entry#${entry.id}${entry.count ? `*${entry.count}` : ''}`
+              parts.push({ text, entry: true })
+            }
+            continue
+          }
+          if (el.kind === 'link' && el.link?.text) {
+            parts.push({ text: el.link.text, entry: false })
+          }
+        }
+        let out = ''
+        let prevEntry = false
+        for (const part of parts) {
+          if (!part?.text) continue
+          if (out && (part.entry || prevEntry)) out += ' '
+          out += part.text
+          prevEntry = part.entry
+        }
+        return out
       }
       case 'table': {
+        const includeDataTables = opts.includeDataTables === true
         const table = block.table
         const cellMap = table?.cell_map || table?.cellMap || {}
         const rowIds = table?.row_ids || table?.rowIds || []
@@ -406,36 +448,33 @@ export class EndfieldWiki extends plugin {
           const parts = []
           for (const childId of childIds) {
             const child = blockMap[childId]
-            if (child) parts.push(this.renderBlock(child, blockMap))
+            if (child) parts.push(this.renderBlock(child, blockMap, opts))
           }
-          return parts.filter(Boolean).join(' ').trim() || ''
+          return parts.filter(Boolean).join('').trim() || ''
         }
+        const rows = []
+        const allCells = []
         if (rowIds.length > 0 && columnIds.length > 0) {
-          const rows = []
-          const allCells = []
           for (const rowId of rowIds) {
             const rowCells = []
             for (const colId of columnIds) {
               const key = `${rowId}_${colId}`
               const cell = cellMap[key]
               const text = cell ? renderCell(cell) : ''
-              rowCells.push(text)
+              if (text) rowCells.push(text)
               allCells.push(text)
             }
-            rows.push('| ' + rowCells.join(' | ') + ' |')
+            if (rowCells.length > 0) rows.push(rowCells.join(' | '))
           }
-          if (this.isDataOnlyTable(allCells)) return ''
-          const sep = '| ' + columnIds.map(() => '---').join(' | ') + ' |'
-          return rows[0] + '\n' + sep + '\n' + rows.slice(1).join('\n')
+        } else {
+          for (const cid of Object.keys(cellMap)) {
+            const cell = cellMap[cid]
+            const text = renderCell(cell)
+            if (text) rows.push(text)
+          }
         }
-        const cells = []
-        for (const cid of Object.keys(cellMap)) {
-          const cell = cellMap[cid]
-          cells.push(renderCell(cell))
-        }
-        const filtered = cells.filter(Boolean)
-        if (this.isDataOnlyTable(filtered)) return ''
-        return filtered.join('\n')
+        if (!includeDataTables && this.isDataOnlyTable(allCells)) return ''
+        return rows.join('\n')
       }
       case 'list': {
         const list = block.list
@@ -458,6 +497,142 @@ export class EndfieldWiki extends plugin {
       default:
         return ''
     }
+  }
+
+  isOperatorContent(content) {
+    const chapterGroup = content?.chapter_group || content?.chapterGroup || []
+    if (!Array.isArray(chapterGroup)) return false
+    return chapterGroup.some((ch) => ['能力扩延', '干员潜能'].includes(ch?.title || ''))
+  }
+
+  getTabEntries(widgetData) {
+    if (!widgetData) return []
+    const tabDataMap = widgetData.tab_data_map || widgetData.tabDataMap || {}
+    const tabList = widgetData.tab_list || widgetData.tabList || []
+    const entries = []
+    if (Array.isArray(tabList) && tabList.length > 0) {
+      for (const tab of tabList) {
+        const tabId = tab?.tab_id
+        const docId = tabId ? tabDataMap[tabId]?.content : null
+        if (docId) entries.push({ title: tab?.title || '', docId })
+      }
+      return entries
+    }
+    for (const tabId of Object.keys(tabDataMap)) {
+      const docId = tabDataMap[tabId]?.content
+      if (docId) entries.push({ title: '', docId })
+    }
+    return entries
+  }
+
+  renderDocumentParts(content, docId, opts = {}) {
+    const docMap = content?.document_map || content?.documentMap || {}
+    const doc = docMap[docId]
+    if (!doc) return { textLines: [], tableLines: [] }
+    const blockIds = doc.block_ids || doc.blockIds || []
+    const blockMap = doc.block_map || doc.blockMap || {}
+    const textLines = []
+    const tableLines = []
+    for (const bid of blockIds) {
+      const block = blockMap[bid]
+      if (!block) continue
+      if (block.kind === 'horizontalLine') continue
+      if (block.kind === 'table') {
+        const text = this.renderBlock(block, blockMap, opts)
+        if (text) tableLines.push(...text.split('\n').filter(Boolean))
+        continue
+      }
+      const line = this.renderBlock(block, blockMap, opts)
+      if (line) textLines.push(line)
+    }
+    return { textLines, tableLines }
+  }
+
+  inferBattleSkillTitle(textLines, tableLines, index) {
+    const all = [...textLines, ...tableLines].join('\n')
+    if (all.includes('普攻') || all.includes('处决') || all.includes('下落')) return '普通攻击'
+    if (all.includes('所需终结技能量') || all.includes('强化普攻')) return '终结技'
+    if (all.includes('冷却时间')) return '战技2'
+    if (all.includes('技力消耗')) return '战技1'
+    return `战斗技能${index + 1}`
+  }
+
+  buildOperatorSections(content) {
+    const { chapterGroup, widgetMap } = this.getContentMaps(content)
+    const sections = []
+    for (const ch of chapterGroup) {
+      const title = ch?.title || ''
+      if (EndfieldWiki.EXCLUDED_CHAPTER_TITLES.includes(title)) continue
+      if (title === '能力扩延') {
+        const widgets = ch.widgets || []
+        const eliteWidgetId = widgets.find((w) => w?.title === '精英化')?.id || 'UUvMydhr'
+        const battleWidgetId = widgets.find((w) => w?.title === '战斗技能')?.id || 'wy2mIqZc'
+        const talentWidgetId = widgets.find((w) => w?.title === '天赋阵列')?.id || 'go4OZdMl'
+
+        const eliteWidget = widgetMap[eliteWidgetId]
+        const eliteTabs = this.getTabEntries(eliteWidget)
+        if (eliteTabs.length > 0) {
+          const lines = []
+          const firstParts = this.renderDocumentParts(content, eliteTabs[0].docId, { includeDataTables: true })
+          const noteLine = firstParts.textLines.find((l) => l.startsWith('注：'))
+          if (noteLine) lines.push(noteLine)
+          lines.push('【精英化】')
+          for (const tab of eliteTabs) {
+            const tabTitle = tab.title || tab.docId
+            lines.push(`【${tabTitle}】`)
+            const parts = this.renderDocumentParts(content, tab.docId, { includeDataTables: true })
+            lines.push(...parts.tableLines)
+          }
+          sections.push({ title: '能力扩延', lines })
+        }
+
+        const battleWidget = widgetMap[battleWidgetId]
+        const battleTabs = this.getTabEntries(battleWidget)
+        if (battleTabs.length > 0) {
+          const lines = []
+          battleTabs.forEach((tab, idx) => {
+            const parts = this.renderDocumentParts(content, tab.docId, { includeDataTables: true })
+            const skillTitle = this.inferBattleSkillTitle(parts.textLines, parts.tableLines, idx)
+            lines.push(`【${skillTitle}】`)
+            if (parts.textLines.length > 0) lines.push(...parts.textLines)
+            lines.push(...parts.tableLines)
+          })
+          sections.push({ title: '战斗技能', lines })
+        }
+
+        const talentWidget = widgetMap[talentWidgetId]
+        const talentTabs = this.getTabEntries(talentWidget)
+        if (talentTabs.length > 0) {
+          const lines = []
+          talentTabs.forEach((tab, idx) => {
+            const parts = this.renderDocumentParts(content, tab.docId, { includeDataTables: true })
+            const name = parts.textLines[0] || `天赋${idx + 1}`
+            lines.push(`【${name}】`)
+            if (parts.textLines.length > 1) lines.push(...parts.textLines.slice(1))
+            lines.push(...parts.tableLines)
+          })
+          sections.push({ title: '天赋阵列', lines })
+        }
+        continue
+      }
+
+      if (title === '干员潜能') {
+        const widgets = ch.widgets || []
+        const potWidgetId = widgets.find((w) => w?.title === '干员潜能')?.id || 'Q0F4IPzk'
+        const potWidget = widgetMap[potWidgetId]
+        const potTabs = this.getTabEntries(potWidget)
+        if (potTabs.length > 0) {
+          const lines = []
+          for (const tab of potTabs) {
+            const parts = this.renderDocumentParts(content, tab.docId, { includeDataTables: true })
+            lines.push(...parts.textLines)
+          }
+          sections.push({ title: '干员潜能', lines })
+        }
+        continue
+      }
+    }
+    return sections
   }
 
 }
