@@ -56,10 +56,6 @@ export class EndfieldGacha extends plugin {
           fnc: 'viewGachaAnalysis'
         },
         {
-          reg: '^(?:[:：]|[/#](?:zmd|终末地))全服抽卡统计(?:\\s+(.+))?$',
-          fnc: 'globalGachaStats'
-        },
-        {
           reg: '^(?:[:：]|[/#](?:zmd|终末地))同步全部抽卡$',
           fnc: 'syncAllGacha',
           permission: 'master'
@@ -813,6 +809,7 @@ export class EndfieldGacha extends plugin {
             images.push({
               name: info?.name || name,
               url: info?.url || '',
+              seqId: r.seq_id != null ? String(r.seq_id) : '',
               pullCount,
               tag,
               badgeColor,
@@ -822,7 +819,17 @@ export class EndfieldGacha extends plugin {
             })
           } else {
             const cover = weaponCoverMap[name]
-            images.push({ name, url: cover || '', pullCount, tag, badgeColor, barPercent, barColorLevel, refLinePercent: null })
+            images.push({
+              name,
+              url: cover || '',
+              seqId: r.seq_id != null ? String(r.seq_id) : '',
+              pullCount,
+              tag,
+              badgeColor,
+              barPercent,
+              barColorLevel,
+              refLinePercent: null
+            })
           }
           pullsSinceLast6 = 0
         }
@@ -1094,20 +1101,15 @@ export class EndfieldGacha extends plugin {
         currentEntry.isInProbBoostZone = sharedPityTo6Star >= PITY.charProbBoost
         currentEntry.isHardPity = sharedPityTo6Star >= PITY.charSoft
         
-        // 更新当前池中6星角色的跨池垫抽数显示
-        if (Array.isArray(currentEntry.images) && Object.keys(seqIdToSharedPity).length > 0) {
-          const paidRecords = (charByPoolName[currentLimitedPoolName] || []).filter((r) => r.is_free !== true)
-          for (const img of currentEntry.images) {
-            if (!img || img.tag === '免费') continue
-            // 查找该图片对应的记录
-            const matchRecord = paidRecords.find((r) => {
-              if (r.rarity !== 6) return false
-              const name = String(r.char_name || r.item_name || '').trim()
-              return name === img.name
-            })
-            if (matchRecord) {
-              const seqKey = String(matchRecord.seq_id ?? '').trim()
-              const crossPoolPity = seqIdToSharedPity[seqKey]
+        // 更新限定池中6星角色的跨池垫抽数显示（按 seq_id 匹配）
+        if (Object.keys(seqIdToSharedPity).length > 0) {
+          for (const entry of charPoolEntries) {
+            if (!isLimitedPoolName(entry.poolName)) continue
+            if (!Array.isArray(entry.images)) continue
+            for (const img of entry.images) {
+              if (!img || img.tag === '免费') continue
+              const seqKey = String(img.seqId ?? '').trim()
+              const crossPoolPity = seqKey ? seqIdToSharedPity[seqKey] : undefined
               if (typeof crossPoolPity === 'number') {
                 img.pullCount = crossPoolPity
                 const maxPity = PITY.charSoft
@@ -1423,263 +1425,6 @@ export class EndfieldGacha extends plugin {
     return msg.replace(/\{qq号\}/g, uid).replace(/\{qqname\}/g, name)
   }
 
-  findGlobalStatsPeriod(periods, keyword) {
-    const target = String(keyword || '').trim()
-    if (!target) return null
-    const rows = Array.isArray(periods) ? periods : []
-    return rows.find((p) => {
-      const names = Array.isArray(p?.up_char_names) ? p.up_char_names : []
-      const poolName = String(p?.pool_name || '').trim()
-      return names.some((n) => {
-        const name = String(n || '').trim()
-        return name === target || name.includes(target) || target.includes(name)
-      }) || poolName === target || poolName.includes(target) || target.includes(poolName)
-    }) || null
-  }
-
-  formatGlobalStatsSyncTime(cached, lastUpdate) {
-    if (cached === true) return getMessage('gacha.global_stats_cached_short')
-    if (!lastUpdate) return getMessage('gacha.global_stats_just_now')
-    try {
-      const d = new Date(lastUpdate)
-      if (Number.isNaN(d.getTime())) return String(lastUpdate)
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-    } catch {
-      return String(lastUpdate)
-    }
-  }
-
-  isGlobalRankingUpChar(row, upCharNames = [], upCharId = '') {
-    if (upCharNames.length > 0) {
-      return upCharNames.some((n) => {
-        const target = String(n || '').trim()
-        const name = String(row?.char_name || '').trim()
-        return name === target || name.includes(target) || target.includes(name)
-      })
-    }
-    return !!(upCharId && row?.char_id === upCharId)
-  }
-
-  buildGlobalDistributionList(distRaw) {
-    const list = Array.isArray(distRaw) ? distRaw : []
-    const maxC = Math.max(...list.map((d) => Number(d?.count ?? 0)), 1)
-    return list.map((d) => ({
-      range: d?.range || '-',
-      count: d?.count ?? 0,
-      height: Math.min(100, Math.max(8, ((Number(d?.count ?? 0) || 0) / maxC) * 100))
-    }))
-  }
-
-  buildGlobalRankingList(rows, options = {}) {
-    const { isLimited = false, upCharNames = [], upCharId = '' } = options
-    const list = Array.isArray(rows) ? rows : []
-    return list.map((r) => ({
-      char_name: r?.char_name || '-',
-      count: r?.count ?? 0,
-      percent: (r?.percent != null ? Number(r.percent).toFixed(1) : '0'),
-      isUp: isLimited && this.isGlobalRankingUpChar(r, upCharNames, upCharId)
-    }))
-  }
-
-  buildGlobalPoolSection(statsData, byType, options = {}) {
-    const { key, label, rankTop = 5, showRanking = true, upCharNames = [], upCharId = '' } = options
-    const poolData = byType?.[key] || {}
-    const poolTotal = poolData?.total ?? 0
-    const poolStar6 = poolData?.star6 ?? 0
-    const avgPity = poolData?.avg_pity != null ? Number(poolData.avg_pity).toFixed(1) : '-'
-    const star6Rate = poolTotal > 0 ? ((poolStar6 / poolTotal) * 100).toFixed(2) + '%' : '0%'
-    const section = {
-      label,
-      key,
-      total: poolTotal,
-      star6: poolStar6,
-      star5: poolData?.star5 ?? 0,
-      star4: poolData?.star4 ?? 0,
-      avgPity,
-      star6Rate,
-      distributionList: this.buildGlobalDistributionList(poolData?.distribution),
-      showRanking,
-      rankingList6: [],
-      rankingList5: [],
-      rankingTab6: key === 'weapon' ? '6星武器' : '6星干员',
-      rankingTab5: key === 'weapon' ? '5星武器' : '5星干员'
-    }
-    if (showRanking) {
-      section.rankingList6 = this.buildGlobalRankingList(statsData?.ranking?.[key]?.six_star, {
-        isLimited: key === 'limited',
-        upCharNames,
-        upCharId
-      }).slice(0, rankTop)
-      section.rankingList5 = this.buildGlobalRankingList(statsData?.ranking?.[key]?.five_star).slice(0, rankTop)
-    }
-    return section
-  }
-
-  /** 全服抽卡统计：常驻/新手/武器/限定四类卡池均展示；顶部 UP 与限定池可切换期数，发送「:全服抽卡统计 <干员名>」切换为该干员对应期 */
-  async globalGachaStats() {
-    const pluResPath = this.e?.runtime?.path?.plugin?.['endfield-plugin']?.res || ''
-    const msg = (this.e.msg || '').trim()
-    const charNameMatch = msg.match(/(?:[:：]|[/#](?:zmd|终末地))全服抽卡统计\s*(.*)$/)
-    const charName = (charNameMatch && charNameMatch[1] ? charNameMatch[1].trim() : '') || ''
-
-    let data = await hypergryphAPI.getGachaGlobalStats()
-    if (!data?.stats) {
-      await this.reply(getMessage('gacha.global_stats_failed'))
-      return true
-    }
-
-    const currentPeriodLabel = getMessage('gacha.global_stats_current_period')
-    let periodLabel = currentPeriodLabel
-    if (charName) {
-      const found = this.findGlobalStatsPeriod(data.stats.pool_periods || [], charName)
-      if (!found) {
-        await this.reply(getMessage('gacha.global_stats_pool_not_found', { name: charName }))
-        return true
-      }
-      data = await hypergryphAPI.getGachaGlobalStats(found.pool_name)
-      if (!data?.stats) {
-        await this.reply(getMessage('gacha.global_stats_failed'))
-        return true
-      }
-      periodLabel = found.pool_name
-    } else {
-      const currentPoolName = data.stats.current_pool?.pool_name
-      if (currentPoolName) {
-        data = await hypergryphAPI.getGachaGlobalStats(currentPoolName)
-        if (data?.stats) periodLabel = currentPeriodLabel
-      }
-    }
-
-    const s = data.stats
-    const totalPulls = s.total_pulls ?? 0
-    const totalUsers = s.total_users ?? 0
-    const star6 = s.star6_total ?? 0
-    const star5 = s.star5_total ?? 0
-    const star4 = s.star4_total ?? 0
-    const avgPity = s.avg_pity != null ? Number(s.avg_pity).toFixed(2) : '-'
-    const pool = s.current_pool
-    const biliUp = await this.getCurrentUpFromBiliWiki()
-    const upName = (pool?.up_char_name || (pool?.up_char_names && pool.up_char_names[0]) || (biliUp?.upCharName && biliUp.upCharName.trim()) || '-').trim()
-    const upCharNames = (pool?.up_char_names && pool.up_char_names.length) ? pool.up_char_names : (biliUp?.upCharNames?.length ? biliUp.upCharNames : [upName].filter(Boolean))
-    const upCharId = pool?.up_char_id || ''
-    const byChannel = s.by_channel
-    const officialRaw = byChannel?.official
-    const bilibiliRaw = byChannel?.bilibili
-    const fmt = (v) => (v != null ? Number(v).toFixed(2) : '-')
-    const syncTime = this.formatGlobalStatsSyncTime(data.cached, data.last_update)
-    const byType = s.by_type || {}
-    const official = officialRaw ? {
-      total_users: officialRaw.total_users ?? 0,
-      total_pulls: officialRaw.total_pulls ?? 0,
-      star6_total: officialRaw.star6_total ?? 0,
-      avg_pity: fmt(officialRaw.avg_pity)
-    } : null
-    const bilibili = bilibiliRaw ? {
-      total_users: bilibiliRaw.total_users ?? 0,
-      total_pulls: bilibiliRaw.total_pulls ?? 0,
-      star6_total: bilibiliRaw.star6_total ?? 0,
-      avg_pity: fmt(bilibiliRaw.avg_pity)
-    } : null
-    const rankingLimited = s.ranking?.limited?.six_star || []
-    const upEntry = rankingLimited.find((r) => r.char_id === upCharId) ??
-      rankingLimited.find((r) => this.isGlobalRankingUpChar(r, upCharNames, upCharId)) ??
-      rankingLimited.find((r) => r.char_name === upName)
-    const upWinRatePercent = (upEntry?.percent != null ? Number(upEntry.percent).toFixed(1) : '--.-')
-    const upWinRateNum = (upEntry?.percent != null ? Math.min(100, Math.max(0, Number(upEntry.percent))) : 0)
-    const upWeaponNameStr = (pool?.up_weapon_name && pool.up_weapon_name.trim()) ? pool.up_weapon_name.trim() : (biliUp?.upWeaponName && biliUp.upWeaponName.trim() ? biliUp.upWeaponName.trim() : '')
-    const rankingWeapon = s.ranking?.weapon?.six_star || []
-    const upWeaponEntry = upWeaponNameStr ? rankingWeapon.find((r) => {
-      const n = (r.char_name || '').trim()
-      return n === upWeaponNameStr || n.includes(upWeaponNameStr) || upWeaponNameStr.includes(n)
-    }) : null
-    const upWeaponWinRatePercent = (upWeaponEntry?.percent != null ? Number(upWeaponEntry.percent).toFixed(1) : '--.-')
-    const upWeaponWinRateNum = (upWeaponEntry?.percent != null ? Math.min(100, Math.max(0, Number(upWeaponEntry.percent))) : 0)
-
-    if (this.e?.runtime?.render) {
-      try {
-        const standardSec = this.buildGlobalPoolSection(s, byType, {
-          key: 'standard',
-          label: '常驻角色'
-        })
-        const beginnerSec = this.buildGlobalPoolSection(s, byType, {
-          key: 'beginner',
-          label: '新手池',
-          showRanking: false
-        })
-        const weaponSec = this.buildGlobalPoolSection(s, byType, {
-          key: 'weapon',
-          label: '武器池'
-        })
-        const limitedSec = this.buildGlobalPoolSection(s, byType, {
-          key: 'limited',
-          label: periodLabel === '当期UP' ? '限定 · 当期UP' : `限定 · ${periodLabel}`,
-          rankTop: 10,
-          upCharNames,
-          upCharId
-        })
-        const poolSections = [beginnerSec, standardSec, weaponSec, limitedSec]
-
-        const renderData = {
-          title: '全服寻访统计',
-          periodLabel,
-          syncTime,
-          totalPulls,
-          totalUsers,
-          star6,
-          globalAvgPity: s.avg_pity != null ? Number(s.avg_pity).toFixed(2) : '-',
-          showUpBlock: !!(upName && upName !== '-') || !!(upWeaponNameStr && upWeaponNameStr !== ''),
-          upName,
-          upWeaponName: upWeaponNameStr,
-          upWinRate: upWinRatePercent + '%',
-          upWinRateNum,
-          upWeaponWinRate: upWeaponWinRatePercent + '%',
-          upWeaponWinRateNum,
-          official,
-          bilibili,
-          poolSections,
-          pluResPath,
-          periodHint: '发送 :全服抽卡统计 <干员名> 可查看其他期数',
-          ...getCopyright()
-        }
-        const imgSegment = await this.e.runtime.render('endfield-plugin', 'gacha/global-stats', renderData, { scale: 1.6, retType: 'base64' })
-        if (imgSegment) {
-          await this.reply(imgSegment)
-          return true
-        }
-      } catch (err) {
-        logger.error(`[终末地插件][全服抽卡统计]渲染图失败: ${err?.message || err}`)
-      }
-    }
-
-    let text = getMessage('gacha.global_stats_fallback_title')
-    if (periodLabel !== getMessage('gacha.global_stats_current_period')) text += ` · ${periodLabel}`
-    text += '\n'
-    text += getMessage('gacha.global_stats_fallback_summary', { total: totalPulls, users: totalUsers }) + '\n'
-    text += getMessage('gacha.global_stats_fallback_stars', {
-      star6,
-      star5,
-      star4,
-      avgPity
-    }) + '\n'
-    text += getMessage('gacha.global_stats_fallback_up', { upName }) + '\n'
-    if (officialRaw || bilibiliRaw) {
-      if (officialRaw) text += getMessage('gacha.global_stats_fallback_official', {
-        users: officialRaw.total_users ?? 0,
-        pulls: officialRaw.total_pulls ?? 0,
-        avg: fmt(officialRaw.avg_pity)
-      }) + '\n'
-      if (bilibiliRaw) text += getMessage('gacha.global_stats_fallback_bili', {
-        users: bilibiliRaw.total_users ?? 0,
-        pulls: bilibiliRaw.total_pulls ?? 0,
-        avg: fmt(bilibiliRaw.avg_pity)
-      }) + '\n'
-    }
-    text += '\n' + getMessage('gacha.global_stats_fallback_hint') + '\n'
-    if (data.cached === true) text += getMessage('gacha.global_stats_fallback_cache')
-    else if (data.last_update) text += getMessage('gacha.global_stats_fallback_update', { time: data.last_update })
-    await this.reply(text)
-    return true
-  }
 
   /** 同步全部抽卡：管理员专用，为所有已绑定用户触发抽卡同步（仅发起请求，不轮询等待）；账号间间隔约 3 秒避免并发过高 */
   async syncAllGacha() {

@@ -351,48 +351,84 @@ export class EndfieldOperator extends plugin {
         return true
       }
 
-      let templateId = String(matched.templateId || matched.template_id || '').trim()
+      const norm = (val) => String(val || '').trim()
+      let templateId = norm(matched.templateId || matched.template_id || '')
 
-      const friendDetailRes = hasApiKey
-        ? await sklUser.sklReq.getData('friend_detail').catch(() => false)
-        : false
-      let friendRoleId = ''
-      let friendCharTemplateId = ''
-      try {
-        const payload = friendDetailRes?.data || {}
-        const friendData = isApiSuccess(friendDetailRes) ? payload : (payload?.data || payload)
-        friendRoleId = String(friendData?.role_profile?.role_id || friendData?.role_profile?.roleId || '').trim()
+      let panelTemplateId = ''
+      let friendCharData = null
 
-        const friendChars = friendData?.role_profile?.char_data || []
-        if (Array.isArray(friendChars) && friendChars.length) {
-          const targetName = String(matched.name || operatorName || '').trim()
-          const hit = friendChars.find((x) => String(x?.template?.name_cn || '').trim() === targetName)
-          friendCharTemplateId = String(hit?.template_id || hit?.template?.id || '').trim()
+      if (hasApiKey) {
+        try {
+          const panelListRes = await sklUser.sklReq.getData('panel_chars', { page: 1, page_size: 50 }).catch(() => false)
+          if (isApiSuccess(panelListRes)) {
+            const rows = Array.isArray(panelListRes?.data?.synced_chars) ? panelListRes.data.synced_chars : []
+            const targetName = norm(matched.name || operatorName)
+            const targetTemplate = norm(templateId)
+            const hit = rows.find((r) => {
+              const tid = norm(r?.template_id || r?.templateId)
+              const nameCn = norm(r?.name_cn || r?.name)
+              return (targetTemplate && tid === targetTemplate) || (nameCn && nameCn === targetName)
+            })
+            panelTemplateId = norm(hit?.template_id || hit?.templateId || targetTemplate)
+          }
+        } catch (err) {
+          panelTemplateId = ''
         }
-      } catch (err) {
-        friendRoleId = ''
-        friendCharTemplateId = ''
       }
 
-      const enableFriendPanel = Boolean(friendRoleId && friendCharTemplateId)
+      if (hasApiKey && panelTemplateId) {
+        const panelCharResRaw = await sklUser.sklReq.getData('panel_char_detail', { template_id: panelTemplateId }).catch(() => false)
+        try {
+          if (panelCharResRaw) {
+            const payload = panelCharResRaw?.data || {}
+            friendCharData = isApiSuccess(panelCharResRaw) ? payload : (payload?.data || payload)
+          }
+        } catch (err) {
+          friendCharData = null
+        }
+      }
 
-      if (enableFriendPanel) templateId = friendCharTemplateId
+      let friendRoleId = ''
+      let friendCharTemplateId = ''
+      if (!friendCharData && hasApiKey) {
+        const friendDetailRes = await sklUser.sklReq.getData('friend_detail').catch(() => false)
+        try {
+          const payload = friendDetailRes?.data || {}
+          const friendData = isApiSuccess(friendDetailRes) ? payload : (payload?.data || payload)
+          friendRoleId = norm(friendData?.role_profile?.role_id || friendData?.role_profile?.roleId || '')
+
+          const friendChars = friendData?.role_profile?.char_data || []
+          if (Array.isArray(friendChars) && friendChars.length) {
+            const targetName = norm(matched.name || operatorName)
+            const hit = friendChars.find((x) => norm(x?.template?.name_cn) === targetName)
+            friendCharTemplateId = norm(hit?.template_id || hit?.template?.id || '')
+          }
+        } catch (err) {
+          friendRoleId = ''
+          friendCharTemplateId = ''
+        }
+      }
+
+      const enableFriendPanel = Boolean(friendCharData || (friendRoleId && friendCharTemplateId))
+
+      const friendTemplateId = panelTemplateId || friendCharTemplateId || templateId
 
       const [operatorRes, friendCharResRaw] = await Promise.all([
         sklUser.sklReq.getData('endfield_card_char', { instId, roleId, serverId }),
-        (hasApiKey && enableFriendPanel && templateId && friendRoleId)
-          ? sklUser.sklReq.getData('friend_char', { role_id: friendRoleId, template_id: templateId }).catch(() => false)
+        (!friendCharData && hasApiKey && enableFriendPanel && friendTemplateId && friendRoleId)
+          ? sklUser.sklReq.getData('friend_char', { role_id: friendRoleId, template_id: friendTemplateId }).catch(() => false)
           : Promise.resolve(false)
       ])
 
-      let friendCharData = null
-      try {
-        if (friendCharResRaw) {
-          const payload = friendCharResRaw?.data || {}
-          friendCharData = isApiSuccess(friendCharResRaw) ? payload : (payload?.data || payload)
+      if (!friendCharData) {
+        try {
+          if (friendCharResRaw) {
+            const payload = friendCharResRaw?.data || {}
+            friendCharData = isApiSuccess(friendCharResRaw) ? payload : (payload?.data || payload)
+          }
+        } catch (err) {
+          friendCharData = null
         }
-      } catch (err) {
-        friendCharData = null
       }
 
       if (!isApiSuccess(operatorRes)) {
@@ -416,7 +452,7 @@ export class EndfieldOperator extends plugin {
         friendChar: friendCharData,
         friendPanel,
         gearCards,
-        friendTemplateId: templateId || '',
+        friendTemplateId: friendTemplateId || '',
         userAvatar: base?.avatarUrl || '',
         userNickname: base?.name || '未知',
         userLevel: base?.level ?? 0,
