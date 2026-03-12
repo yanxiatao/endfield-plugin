@@ -331,6 +331,7 @@ export class EndfieldGacha extends plugin {
       const bannerData = setting.getData('game_banners') || {}
       const upChars = Array.isArray(bannerData.up_characters) ? bannerData.up_characters : []
       const upWeapons = Array.isArray(bannerData.up_weapons) ? bannerData.up_weapons : []
+      const permanentWeapons = Array.isArray(bannerData.permanent_weapons) ? bannerData.permanent_weapons : []
       const nowTs = Date.now()
 
       const rows = []
@@ -366,6 +367,20 @@ export class EndfieldGacha extends plugin {
           start_ts: startTs,
           end_ts: endTs,
           is_active: isActive
+        })
+      }
+      for (const item of permanentWeapons) {
+        const poolName = String(item?.pool_name || '').trim()
+        const weaponName = String(item?.weapon_name || '').trim()
+        if (!poolName || !weaponName) continue
+        rows.push({
+          type: '武库申领',
+          name: `武库申领·${poolName}`,
+          up: weaponName,
+          start_time: '',
+          start_ts: 0,
+          end_ts: 0,
+          is_active: true
         })
       }
 
