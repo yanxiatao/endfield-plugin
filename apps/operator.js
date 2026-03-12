@@ -8,10 +8,8 @@ import setting from '../utils/setting.js'
 
 const _dir = path.dirname(fileURLToPath(import.meta.url))
 const _res = path.join(_dir, '..', 'resources')
-const _operator = path.join(_res, 'operator')
 const _meta = path.join(_res, 'meta')
 
-const OPERATOR_DIR = _operator
 const META_CLASS_DIR = path.join(_meta, 'class')
 const META_ATTRPANLE_DIR = path.join(_meta, 'attrpanle')
 const META_PHASES_DIR = path.join(_meta, 'phases')
@@ -289,21 +287,15 @@ export class EndfieldOperator extends plugin {
     return cards
   }
 
-  getOperatorTemplateIdByCnName(nameCn) {
-    const map = setting.getData('operatorMap') || {}
-    const entries = Object.entries(map)
-    const target = String(nameCn || '').trim()
-    if (!target) return ''
-    for (const [templateId, cn] of entries) {
-      if (String(cn || '').trim() === target) return templateId
-    }
-    return ''
-  }
-
   getOperatorNameFromMsg() {
     let s = (this.e.msg || '').replace(/面板$/, '').trim()
     s = s.replace(/^(?:[:：]|[/#](?:zmd|终末地))\s*/i, '').trim()
     return s
+  }
+
+  hasApiKey() {
+    const apiKey = setting.getConfig('common')?.api_key
+    return String(apiKey || '').trim() !== ''
   }
 
   async getOperator() {
@@ -324,6 +316,7 @@ export class EndfieldOperator extends plugin {
     await this.reply(getMessage('operator.loading_detail'))
 
     try {
+      const hasApiKey = this.hasApiKey()
       const roleId = String(sklUser.endfield_uid || '')
       const serverId = Number(sklUser.server_id || 1)
       const res = await sklUser.sklReq.getData('note', { roleId, serverId })
@@ -334,8 +327,8 @@ export class EndfieldOperator extends plugin {
         return true
       }
 
-      const chars = res.data?.chars || []
       const base = res.data?.base || {}
+      const chars = res.data?.chars || []
       if (!chars.length) {
         await this.reply(getMessage('operator.not_found_info'))
         return true
@@ -358,46 +351,84 @@ export class EndfieldOperator extends plugin {
         return true
       }
 
-      let templateId = String(matched.templateId || matched.template_id || '').trim() || this.getOperatorTemplateIdByCnName(matched.name || operatorName)
+      const norm = (val) => String(val || '').trim()
+      let templateId = norm(matched.templateId || matched.template_id || '')
 
-      const friendDetailRes = await sklUser.sklReq.getData('friend_detail').catch(() => false)
-      let friendRoleId = ''
-      let friendCharTemplateId = ''
-      try {
-        const payload = friendDetailRes?.data || {}
-        const friendData = isApiSuccess(friendDetailRes) ? payload : (payload?.data || payload)
-        friendRoleId = String(friendData?.role_profile?.role_id || friendData?.role_profile?.roleId || '').trim()
+      let panelTemplateId = ''
+      let friendCharData = null
 
-        const friendChars = friendData?.role_profile?.char_data || []
-        if (Array.isArray(friendChars) && friendChars.length) {
-          const targetName = String(matched.name || operatorName || '').trim()
-          const hit = friendChars.find((x) => String(x?.template?.name_cn || '').trim() === targetName)
-          friendCharTemplateId = String(hit?.template_id || hit?.template?.id || '').trim()
+      if (hasApiKey) {
+        try {
+          const panelListRes = await sklUser.sklReq.getData('panel_chars', { page: 1, page_size: 50 }).catch(() => false)
+          if (isApiSuccess(panelListRes)) {
+            const rows = Array.isArray(panelListRes?.data?.synced_chars) ? panelListRes.data.synced_chars : []
+            const targetName = norm(matched.name || operatorName)
+            const targetTemplate = norm(templateId)
+            const hit = rows.find((r) => {
+              const tid = norm(r?.template_id || r?.templateId)
+              const nameCn = norm(r?.name_cn || r?.name)
+              return (targetTemplate && tid === targetTemplate) || (nameCn && nameCn === targetName)
+            })
+            panelTemplateId = norm(hit?.template_id || hit?.templateId || targetTemplate)
+          }
+        } catch (err) {
+          panelTemplateId = ''
         }
-      } catch (err) {
-        friendRoleId = ''
-        friendCharTemplateId = ''
       }
 
-      const enableFriendPanel = Boolean(friendRoleId && friendCharTemplateId)
+      if (hasApiKey && panelTemplateId) {
+        const panelCharResRaw = await sklUser.sklReq.getData('panel_char_detail', { template_id: panelTemplateId }).catch(() => false)
+        try {
+          if (panelCharResRaw) {
+            const payload = panelCharResRaw?.data || {}
+            friendCharData = isApiSuccess(panelCharResRaw) ? payload : (payload?.data || payload)
+          }
+        } catch (err) {
+          friendCharData = null
+        }
+      }
 
-      if (enableFriendPanel) templateId = friendCharTemplateId
+      let friendRoleId = ''
+      let friendCharTemplateId = ''
+      if (!friendCharData && hasApiKey) {
+        const friendDetailRes = await sklUser.sklReq.getData('friend_detail').catch(() => false)
+        try {
+          const payload = friendDetailRes?.data || {}
+          const friendData = isApiSuccess(friendDetailRes) ? payload : (payload?.data || payload)
+          friendRoleId = norm(friendData?.role_profile?.role_id || friendData?.role_profile?.roleId || '')
+
+          const friendChars = friendData?.role_profile?.char_data || []
+          if (Array.isArray(friendChars) && friendChars.length) {
+            const targetName = norm(matched.name || operatorName)
+            const hit = friendChars.find((x) => norm(x?.template?.name_cn) === targetName)
+            friendCharTemplateId = norm(hit?.template_id || hit?.template?.id || '')
+          }
+        } catch (err) {
+          friendRoleId = ''
+          friendCharTemplateId = ''
+        }
+      }
+
+      const enableFriendPanel = Boolean(friendCharData || (friendRoleId && friendCharTemplateId))
+
+      const friendTemplateId = panelTemplateId || friendCharTemplateId || templateId
 
       const [operatorRes, friendCharResRaw] = await Promise.all([
         sklUser.sklReq.getData('endfield_card_char', { instId, roleId, serverId }),
-        (enableFriendPanel && templateId && friendRoleId)
-          ? sklUser.sklReq.getData('friend_char', { role_id: friendRoleId, template_id: templateId }).catch(() => false)
+        (!friendCharData && hasApiKey && enableFriendPanel && friendTemplateId && friendRoleId)
+          ? sklUser.sklReq.getData('friend_char', { role_id: friendRoleId, template_id: friendTemplateId }).catch(() => false)
           : Promise.resolve(false)
       ])
 
-      let friendCharData = null
-      try {
-        if (friendCharResRaw) {
-          const payload = friendCharResRaw?.data || {}
-          friendCharData = isApiSuccess(friendCharResRaw) ? payload : (payload?.data || payload)
+      if (!friendCharData) {
+        try {
+          if (friendCharResRaw) {
+            const payload = friendCharResRaw?.data || {}
+            friendCharData = isApiSuccess(friendCharResRaw) ? payload : (payload?.data || payload)
+          }
+        } catch (err) {
+          friendCharData = null
         }
-      } catch (err) {
-        friendCharData = null
       }
 
       if (!isApiSuccess(operatorRes)) {
@@ -421,7 +452,7 @@ export class EndfieldOperator extends plugin {
         friendChar: friendCharData,
         friendPanel,
         gearCards,
-        friendTemplateId: templateId || '',
+        friendTemplateId: friendTemplateId || '',
         userAvatar: base?.avatarUrl || '',
         userNickname: base?.name || '未知',
         userLevel: base?.level ?? 0,
@@ -550,28 +581,12 @@ export class EndfieldOperator extends plugin {
 
   extractOperatorDetail(data = {}) {
     const container = data?.detail || data || {}
-    const operator = container.char || container.operator || container || {}
-    const charData = operator.charData || container.charData || operator?.char?.charData || {}
-    const userSkills = operator.userSkills || container.userSkills || operator?.char?.userSkills || {}
+    let operator = container.char || container.operator || container || {}
+    let charData = operator.charData || container.charData || operator?.char?.charData || {}
+    let userSkills = operator.userSkills || container.userSkills || operator?.char?.userSkills || {}
     return { operator, charData, userSkills, container }
   }
 
-  async fetchCharacterDetail(sklUser) {
-    const roleId = String(sklUser.endfield_uid || '')
-    const serverId = Number(sklUser.server_id || 1)
-    const res = await sklUser.sklReq.getData('note', { roleId, serverId })
-    if (!isApiSuccess(res)) {
-      logger.error(`[终末地干员]获取角色信息失败: ${JSON.stringify(res)}`)
-      await this.reply(getMessage('common.get_role_failed'))
-      return null
-    }
-    const base = res.data?.base || {}
-    const chars = res.data?.chars || []
-    const serverName = base.serverName?.trim() || '未知'
-    return { base, chars, serverName }
-  }
-
-  
   async getOperatorList(options = {}) {
     const uid = this.e.at || this.e.user_id
     const sklUser = new EndfieldUser(uid)
@@ -584,6 +599,7 @@ export class EndfieldOperator extends plugin {
     if (!options.silent) await this.reply(getMessage('operator.loading_list'))
 
     try {
+      const hasApiKey = this.hasApiKey()
       if (options.frameworkToken && sklUser.sklReq) {
         sklUser.framework_token = String(options.frameworkToken)
         sklUser.sklReq.setFrameworkToken(String(options.frameworkToken))
@@ -592,43 +608,43 @@ export class EndfieldOperator extends plugin {
       const allSyncedChars = []
       let syncCompleted = false
       let syncFailedReason = ''
+      let friendRoleId = ''
 
-      const syncRes = await sklUser.sklReq.getData('panel_sync')
-      if (!isApiSuccess(syncRes)) {
-        syncFailedReason = syncRes?.message || '触发同步失败'
-        logger.warn(`[终末地面板同步][${uid}] 触发失败，已降级实时数据：${syncFailedReason}`)
+      if (hasApiKey) {
+        const syncRes = await sklUser.sklReq.getData('panel_sync')
+        if (!isApiSuccess(syncRes)) {
+          syncFailedReason = syncRes?.message || '触发同步失败'
+          logger.warn(`[终末地面板同步][${uid}] 触发失败，已降级实时数据：${syncFailedReason}`)
+        } else {
+          // 2) 轮询同步状态
+          const maxPoll = 90
+          for (let i = 0; i < maxPoll; i++) {
+            await this.sleep(2000)
+            const statusRes = await sklUser.sklReq.getData('panel_sync_status')
+            if (!isApiSuccess(statusRes)) continue
+            const status = String(statusRes?.data?.status || '').trim()
+            if (status === 'completed' || status === 'idle') {
+              syncCompleted = true
+              break
+            }
+            if (status === 'failed') {
+              syncFailedReason = pickPanelSyncFailedReason(statusRes)
+              logger.error(`[终末地面板同步][${uid}] 状态失败，已降级实时数据: ${JSON.stringify(statusRes)}`)
+              break
+            }
+          }
+
+          if (!syncCompleted && !syncFailedReason) {
+            syncFailedReason = '同步超时'
+            logger.warn(`[终末地面板同步][${uid}] 轮询超时，已降级实时数据`)
+          }
+        }
       } else {
-        // 2) 轮询同步状态
-        const maxPoll = 90
-        let lastStatus = ''
-        for (let i = 0; i < maxPoll; i++) {
-          await this.sleep(2000)
-          const statusRes = await sklUser.sklReq.getData('panel_sync_status')
-          if (!isApiSuccess(statusRes)) continue
-          const status = String(statusRes?.data?.status || '').trim()
-          if (status && status !== lastStatus) {
-            lastStatus = status
-            logger.mark(`[终末地面板同步][${uid}] 状态: ${status}`)
-          }
-          if (status === 'completed' || status === 'idle') {
-            syncCompleted = true
-            break
-          }
-          if (status === 'failed') {
-            syncFailedReason = pickPanelSyncFailedReason(statusRes)
-            logger.error(`[终末地面板同步][${uid}] 状态失败，已降级实时数据: ${JSON.stringify(statusRes)}`)
-            break
-          }
-        }
-
-        if (!syncCompleted && !syncFailedReason) {
-          syncFailedReason = '同步超时'
-          logger.warn(`[终末地面板同步][${uid}] 轮询超时，已降级实时数据`)
-        }
+        logger.warn(`[终末地面板同步][${uid}] 未配置 api_key，跳过 panel_sync 同步`)
       }
 
-      // 3) 拉取已同步角色列表（分页）
-      if (syncCompleted) {
+      // 3) 拉取已同步角色列表（分页，允许在同步未完成时读取缓存）
+      if (hasApiKey) {
         const pageSize = 50
         let page = 1
         let total = 0
@@ -636,24 +652,32 @@ export class EndfieldOperator extends plugin {
           const listRes = await sklUser.sklReq.getData('panel_chars', { page, page_size: pageSize })
           if (!isApiSuccess(listRes)) {
             const msg = listRes?.message || '获取同步角色列表失败'
-            logger.warn(`[终末地面板同步][${uid}] 读取同步列表失败，已降级实时数据：${msg}`)
+            logger.warn(`[终末地面板同步][${uid}] 读取同步列表失败：${msg}`)
             break
           }
           const data = listRes.data || {}
           const rows = Array.isArray(data.synced_chars) ? data.synced_chars : []
+          if (!friendRoleId) {
+            const candidate = data.game_role_id || data.role_profile?.role_id || ''
+            friendRoleId = String(candidate || '').trim()
+          }
           total = Number(data.total ?? total ?? 0)
           allSyncedChars.push(...rows)
           if (allSyncedChars.length >= total || rows.length < pageSize) break
           page++
         }
       }
+      if (!syncCompleted && syncFailedReason) {
+        logger.warn(`[终末地面板同步][${uid}] 同步未完成，原因: ${syncFailedReason}`)
+      }
 
       // 4) 获取全量干员列表，使用同步角色覆盖展示数据
       const roleId = String(options.roleId || sklUser.endfield_uid || '')
       const serverId = Number(options.serverId || sklUser.server_id || 1)
+      const friendDetailRoleId = friendRoleId || roleId
       const [res, friendDetailRes] = await Promise.all([
         sklUser.sklReq.getData('endfield_card_detail', { roleId, serverId }),
-        sklUser.sklReq.getData('friend_detail').catch(() => false)
+        hasApiKey ? sklUser.sklReq.getData('friend_detail', { role_id: friendDetailRoleId }).catch(() => false) : Promise.resolve(false)
       ])
 
       if (!isApiSuccess(res)) {
@@ -670,17 +694,35 @@ export class EndfieldOperator extends plugin {
         return options.retImage ? null : true
       }
 
-      // 兼容历史 friend_detail 展示标记
+      const norm = (val) => String(val || '').trim()
+      const pickCnName = (...vals) => {
+        for (const v of vals) {
+          const text = norm(v)
+          if (text) return text
+        }
+        return ''
+      }
+
+      // friend_detail 展示标记 / 名称映射
       let friendTemplateCnSet = new Set()
+      let friendTemplateIdSet = new Set()
+      const friendNameById = new Map()
       try {
         const friendPayload = friendDetailRes?.data || {}
         const friendData = isApiSuccess(friendDetailRes) ? friendPayload : (friendPayload?.data || friendPayload)
         const friendList = friendData?.role_profile?.char_data || []
         if (Array.isArray(friendList)) {
-          friendTemplateCnSet = new Set(friendList.map((x) => String(x?.template?.name_cn || '').trim()).filter(Boolean))
+          friendTemplateCnSet = new Set(friendList.map((x) => norm(x?.template?.name_cn)).filter(Boolean))
+          friendTemplateIdSet = new Set(friendList.map((x) => norm(x?.template_id || x?.template?.id)).filter(Boolean))
+          for (const item of friendList) {
+            const tid = norm(item?.template_id || item?.template?.id)
+            const cn = norm(item?.template?.name_cn)
+            if (tid && cn && !friendNameById.has(tid)) friendNameById.set(tid, cn)
+          }
         }
       } catch (err) {
         friendTemplateCnSet = new Set()
+        friendTemplateIdSet = new Set()
       }
 
       // 同步角色索引：
@@ -696,10 +738,19 @@ export class EndfieldOperator extends plugin {
       const operators = chars.map((char) => {
         const c = char.charData || char
         const imageUrl = c.avatarRtUrl || ''
-        const templateId = String(c.templateId || c.template_id || c.id || '').trim()
+        const templateId = norm(
+          char?.template_id ||
+          char?.templateId ||
+          char?.template?.id ||
+          char?.template?.raw_name ||
+          c?.template_id ||
+          c?.templateId ||
+          c?.template?.id ||
+          c?.template?.raw_name ||
+          ''
+        )
         const synced = syncedMap.get(templateId)
         const rarity = parseInt(c.rarity?.value || '1', 10) || 1
-        const rarityClass = `rarity_${rarity}`
         const level = synced?.level ?? char.level ?? c.level ?? 0
         const profession = c.profession?.value || ''
         const property = c.property?.value || ''
@@ -715,9 +766,20 @@ export class EndfieldOperator extends plugin {
           char_property_nature: 'NATURE'
         }
         const colorCode = (colorCodeMap[c.property?.key] || c.colorCode || 'PHY').toUpperCase()
-        const name = String(synced?.name_cn || synced?.name || c.name || '').trim() || '未知'
+        const name = pickCnName(
+          c?.name,
+          char?.name,
+          friendNameById.get(templateId),
+          synced?.name_cn,
+          c?.name_cn,
+          c?.template?.name_cn,
+          char?.name_cn,
+          char?.template?.name_cn
+        ) || '未知'
         const isSynced = syncedOrderMap.has(templateId)
-        const isFriendShowcase = isSynced || friendTemplateCnSet.has(name)
+        const isFriendShowcase = isSynced
+          || friendTemplateIdSet.has(templateId)
+          || friendTemplateCnSet.has(name)
         const evolvePhase = parseInt(char.evolvePhase ?? c.evolvePhase ?? '0', 10) || 0
         const potentialLevel = parseInt(char.potentialLevel ?? c.potentialLevel ?? '0', 10) || 0
         const phaseIcon = iconToDataUrl(META_PHASES_DIR, `phase-${evolvePhase}`)
@@ -726,7 +788,6 @@ export class EndfieldOperator extends plugin {
           name,
           nameChars: Array.from(name),
           imageUrl: imageUrl,
-          rarityClass,
           rarity,
           level,
           profession,
@@ -809,40 +870,5 @@ export class EndfieldOperator extends plugin {
 
   sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms))
-  }
-
-  splitContent(content, maxLength = 2000) {
-    if (!content) return []
-    
-    const messages = []
-    let currentIndex = 0
-
-    while (currentIndex < content.length) {
-      let segment = content.slice(currentIndex, currentIndex + maxLength)
-      
-      if (currentIndex + maxLength < content.length) {
-        const lastPunctuation = Math.max(
-          segment.lastIndexOf('。'),
-          segment.lastIndexOf('！'),
-          segment.lastIndexOf('？'),
-          segment.lastIndexOf('\n')
-        )
-        
-        if (lastPunctuation > maxLength * 0.5) {
-          segment = segment.slice(0, lastPunctuation + 1)
-          currentIndex += lastPunctuation + 1
-        } else {
-          currentIndex += maxLength
-        }
-      } else {
-        currentIndex = content.length
-      }
-
-      if (segment.trim()) {
-        messages.push([segment])
-      }
-    }
-
-    return messages
   }
 }

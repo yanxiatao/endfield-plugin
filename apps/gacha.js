@@ -9,7 +9,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const GACHA_KEYS = {
-  pending: (userId) => `ENDFIELD:GACHA_PENDING:${userId}`,
   lastAnalysis: (userId) => `ENDFIELD:GACHA_LAST_ANALYSIS:${userId}`,
 }
 const SYNC_MS = { pollInterval: 1500, pollTimeout: Infinity }
@@ -57,18 +56,9 @@ export class EndfieldGacha extends plugin {
           fnc: 'viewGachaAnalysis'
         },
         {
-          reg: '^(?:[:：]|[/#](?:zmd|终末地))全服抽卡统计(?:\\s+(.+))?$',
-          fnc: 'globalGachaStats'
-        },
-        {
           reg: '^(?:[:：]|[/#](?:zmd|终末地))同步全部抽卡$',
           fnc: 'syncAllGacha',
           permission: 'master'
-        },
-        {
-          reg: '^(?:[:：]|[/#](?:zmd|终末地))?[1-9]\\d{0,2}$',
-          fnc: 'receiveGachaSelect',
-          log: false
         }
       ]
     })
@@ -337,6 +327,7 @@ export class EndfieldGacha extends plugin {
       const bannerData = setting.getData('game_banners') || {}
       const upChars = Array.isArray(bannerData.up_characters) ? bannerData.up_characters : []
       const upWeapons = Array.isArray(bannerData.up_weapons) ? bannerData.up_weapons : []
+      const permanentWeapons = Array.isArray(bannerData.permanent_weapons) ? bannerData.permanent_weapons : []
       const nowTs = Date.now()
 
       const rows = []
@@ -372,6 +363,20 @@ export class EndfieldGacha extends plugin {
           start_ts: startTs,
           end_ts: endTs,
           is_active: isActive
+        })
+      }
+      for (const item of permanentWeapons) {
+        const poolName = String(item?.pool_name || '').trim()
+        const weaponName = String(item?.weapon_name || '').trim()
+        if (!poolName || !weaponName) continue
+        rows.push({
+          type: '武库申领',
+          name: `武库申领·${poolName}`,
+          up: weaponName,
+          start_time: '',
+          start_ts: 0,
+          end_ts: 0,
+          is_active: true
         })
       }
 
@@ -576,17 +581,26 @@ export class EndfieldGacha extends plugin {
     }
 
     // 降级纯文本
-    let msg = '【抽卡记录】\n'
-    msg += `角色：${userInfo.nickname || userInfo.game_uid || '未知'} | ${userInfo.channel_name || ''}\n`
-    msg += `总抽数：${stats.total_count ?? 0} | 六星：${stats.star6_count ?? 0} | 五星：${stats.star5_count ?? 0} | 四星：${stats.star4_count ?? 0}\n`
+    const unknown = getMessage('common.unknown')
+    let msg = getMessage('gacha.record_fallback_title') + '\n'
+    msg += getMessage('gacha.record_fallback_user', {
+      name: userInfo.nickname || userInfo.game_uid || unknown,
+      channel: userInfo.channel_name ? ` | ${userInfo.channel_name}` : ''
+    }) + '\n'
+    msg += getMessage('gacha.record_fallback_stats', {
+      total: stats.total_count ?? 0,
+      star6: stats.star6_count ?? 0,
+      star5: stats.star5_count ?? 0,
+      star4: stats.star4_count ?? 0
+    }) + '\n'
     for (const sec of poolSections) {
-      msg += `\n【${sec.label}】共 ${sec.total} 抽\n`
+      msg += '\n' + getMessage('gacha.record_section_header', { label: sec.label, total: sec.total }) + '\n'
       if (sec.hasRecords) {
         sec.records.forEach((r) => {
-          msg += `${r.index}. ★${r.rarity} ${r.name}\n`
+          msg += getMessage('gacha.record_item_line', { index: r.index, rarity: r.rarity, name: r.name }) + '\n'
         })
       } else {
-        msg += '暂无记录\n'
+        msg += getMessage('gacha.record_empty') + '\n'
       }
     }
     await this.reply(msg)
@@ -795,6 +809,7 @@ export class EndfieldGacha extends plugin {
             images.push({
               name: info?.name || name,
               url: info?.url || '',
+              seqId: r.seq_id != null ? String(r.seq_id) : '',
               pullCount,
               tag,
               badgeColor,
@@ -804,7 +819,17 @@ export class EndfieldGacha extends plugin {
             })
           } else {
             const cover = weaponCoverMap[name]
-            images.push({ name, url: cover || '', pullCount, tag, badgeColor, barPercent, barColorLevel, refLinePercent: null })
+            images.push({
+              name,
+              url: cover || '',
+              seqId: r.seq_id != null ? String(r.seq_id) : '',
+              pullCount,
+              tag,
+              badgeColor,
+              barPercent,
+              barColorLevel,
+              refLinePercent: null
+            })
           }
           pullsSinceLast6 = 0
         }
@@ -1076,20 +1101,15 @@ export class EndfieldGacha extends plugin {
         currentEntry.isInProbBoostZone = sharedPityTo6Star >= PITY.charProbBoost
         currentEntry.isHardPity = sharedPityTo6Star >= PITY.charSoft
         
-        // 更新当前池中6星角色的跨池垫抽数显示
-        if (Array.isArray(currentEntry.images) && Object.keys(seqIdToSharedPity).length > 0) {
-          const paidRecords = (charByPoolName[currentLimitedPoolName] || []).filter((r) => r.is_free !== true)
-          for (const img of currentEntry.images) {
-            if (!img || img.tag === '免费') continue
-            // 查找该图片对应的记录
-            const matchRecord = paidRecords.find((r) => {
-              if (r.rarity !== 6) return false
-              const name = String(r.char_name || r.item_name || '').trim()
-              return name === img.name
-            })
-            if (matchRecord) {
-              const seqKey = String(matchRecord.seq_id ?? '').trim()
-              const crossPoolPity = seqIdToSharedPity[seqKey]
+        // 更新限定池中6星角色的跨池垫抽数显示（按 seq_id 匹配）
+        if (Object.keys(seqIdToSharedPity).length > 0) {
+          for (const entry of charPoolEntries) {
+            if (!isLimitedPoolName(entry.poolName)) continue
+            if (!Array.isArray(entry.images)) continue
+            for (const img of entry.images) {
+              if (!img || img.tag === '免费') continue
+              const seqKey = String(img.seqId ?? '').trim()
+              const crossPoolPity = seqKey ? seqIdToSharedPity[seqKey] : undefined
               if (typeof crossPoolPity === 'number') {
                 img.pullCount = crossPoolPity
                 const maxPity = PITY.charSoft
@@ -1349,14 +1369,25 @@ export class EndfieldGacha extends plugin {
     }
 
     let msg = options.syncMsg ? options.syncMsg + '\n\n' : ''
-    msg += '【抽卡分析】\n'
-    msg += `角色：${userInfo.nickname || userInfo.game_uid || '未知'} · ${userInfo.channel_name || ''}\n`
+    msg += getMessage('gacha.analysis_fallback_title') + '\n'
+    msg += getMessage('gacha.analysis_fallback_user', {
+      name: userInfo.nickname || userInfo.game_uid || getMessage('common.unknown'),
+      channel: userInfo.channel_name ? ` · ${userInfo.channel_name}` : ''
+    }) + '\n'
     for (const group of poolGroups) {
       for (const p of group.pools) {
-        msg += `${group.label} · ${p.poolName}：${p.total} 抽 | ${p.metric1Label} ${p.metric1} | ${p.metric2Label} ${p.metric2}\n`
+        msg += getMessage('gacha.analysis_fallback_line', {
+          group: group.label,
+          pool: p.poolName,
+          total: p.total,
+          metric1Label: p.metric1Label,
+          metric1: p.metric1,
+          metric2Label: p.metric2Label,
+          metric2: p.metric2
+        }) + '\n'
       }
     }
-    msg += `查看最近记录：${prefix}抽卡记录`
+    msg += getMessage('gacha.analysis_fallback_recent_hint', { prefix })
     await this.reply(msg, false, options.syncMsg ? { at: !!this.e.isGroup } : {})
     await redis.set(GACHA_KEYS.lastAnalysis(this.e.user_id), String(Date.now()), { EX: 900 })
     return true
@@ -1390,253 +1421,10 @@ export class EndfieldGacha extends plugin {
   formatProgressMsg(msg, userId, qqName) {
     if (!msg || typeof msg !== 'string') return msg
     const uid = userId != null ? String(userId) : ''
-    const name = qqName != null && qqName !== '' ? String(qqName) : uid || '用户'
+    const name = qqName != null && qqName !== '' ? String(qqName) : uid || getMessage('common.user')
     return msg.replace(/\{qq号\}/g, uid).replace(/\{qqname\}/g, name)
   }
 
-  findGlobalStatsPeriod(periods, keyword) {
-    const target = String(keyword || '').trim()
-    if (!target) return null
-    const rows = Array.isArray(periods) ? periods : []
-    return rows.find((p) => {
-      const names = Array.isArray(p?.up_char_names) ? p.up_char_names : []
-      const poolName = String(p?.pool_name || '').trim()
-      return names.some((n) => {
-        const name = String(n || '').trim()
-        return name === target || name.includes(target) || target.includes(name)
-      }) || poolName === target || poolName.includes(target) || target.includes(poolName)
-    }) || null
-  }
-
-  formatGlobalStatsSyncTime(cached, lastUpdate) {
-    if (cached === true) return '缓存约5分钟'
-    if (!lastUpdate) return '刚刚'
-    try {
-      const d = new Date(lastUpdate)
-      if (Number.isNaN(d.getTime())) return String(lastUpdate)
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-    } catch {
-      return String(lastUpdate)
-    }
-  }
-
-  isGlobalRankingUpChar(row, upCharNames = [], upCharId = '') {
-    if (upCharNames.length > 0) {
-      return upCharNames.some((n) => {
-        const target = String(n || '').trim()
-        const name = String(row?.char_name || '').trim()
-        return name === target || name.includes(target) || target.includes(name)
-      })
-    }
-    return !!(upCharId && row?.char_id === upCharId)
-  }
-
-  buildGlobalDistributionList(distRaw) {
-    const list = Array.isArray(distRaw) ? distRaw : []
-    const maxC = Math.max(...list.map((d) => Number(d?.count ?? 0)), 1)
-    return list.map((d) => ({
-      range: d?.range || '-',
-      count: d?.count ?? 0,
-      height: Math.min(100, Math.max(8, ((Number(d?.count ?? 0) || 0) / maxC) * 100))
-    }))
-  }
-
-  buildGlobalRankingList(rows, options = {}) {
-    const { isLimited = false, upCharNames = [], upCharId = '' } = options
-    const list = Array.isArray(rows) ? rows : []
-    return list.map((r) => ({
-      char_name: r?.char_name || '-',
-      count: r?.count ?? 0,
-      percent: (r?.percent != null ? Number(r.percent).toFixed(1) : '0'),
-      isUp: isLimited && this.isGlobalRankingUpChar(r, upCharNames, upCharId)
-    }))
-  }
-
-  buildGlobalPoolSection(statsData, byType, options = {}) {
-    const { key, label, rankTop = 5, showRanking = true, upCharNames = [], upCharId = '' } = options
-    const poolData = byType?.[key] || {}
-    const poolTotal = poolData?.total ?? 0
-    const poolStar6 = poolData?.star6 ?? 0
-    const avgPity = poolData?.avg_pity != null ? Number(poolData.avg_pity).toFixed(1) : '-'
-    const star6Rate = poolTotal > 0 ? ((poolStar6 / poolTotal) * 100).toFixed(2) + '%' : '0%'
-    const section = {
-      label,
-      key,
-      total: poolTotal,
-      star6: poolStar6,
-      star5: poolData?.star5 ?? 0,
-      star4: poolData?.star4 ?? 0,
-      avgPity,
-      star6Rate,
-      distributionList: this.buildGlobalDistributionList(poolData?.distribution),
-      showRanking,
-      rankingList6: [],
-      rankingList5: [],
-      rankingTab6: key === 'weapon' ? '6星武器' : '6星干员',
-      rankingTab5: key === 'weapon' ? '5星武器' : '5星干员'
-    }
-    if (showRanking) {
-      section.rankingList6 = this.buildGlobalRankingList(statsData?.ranking?.[key]?.six_star, {
-        isLimited: key === 'limited',
-        upCharNames,
-        upCharId
-      }).slice(0, rankTop)
-      section.rankingList5 = this.buildGlobalRankingList(statsData?.ranking?.[key]?.five_star).slice(0, rankTop)
-    }
-    return section
-  }
-
-  /** 全服抽卡统计：常驻/新手/武器/限定四类卡池均展示；顶部 UP 与限定池可切换期数，发送「:全服抽卡统计 <干员名>」切换为该干员对应期 */
-  async globalGachaStats() {
-    const pluResPath = this.e?.runtime?.path?.plugin?.['endfield-plugin']?.res || ''
-    const msg = (this.e.msg || '').trim()
-    const charNameMatch = msg.match(/(?:[:：]|[/#](?:zmd|终末地))全服抽卡统计\s*(.*)$/)
-    const charName = (charNameMatch && charNameMatch[1] ? charNameMatch[1].trim() : '') || ''
-
-    let data = await hypergryphAPI.getGachaGlobalStats()
-    if (!data?.stats) {
-      await this.reply(getMessage('gacha.global_stats_failed'))
-      return true
-    }
-
-    let periodLabel = '当期UP'
-    if (charName) {
-      const found = this.findGlobalStatsPeriod(data.stats.pool_periods || [], charName)
-      if (!found) {
-        await this.reply(getMessage('gacha.global_stats_pool_not_found', { name: charName }))
-        return true
-      }
-      data = await hypergryphAPI.getGachaGlobalStats(found.pool_name)
-      if (!data?.stats) {
-        await this.reply(getMessage('gacha.global_stats_failed'))
-        return true
-      }
-      periodLabel = found.pool_name
-    } else {
-      const currentPoolName = data.stats.current_pool?.pool_name
-      if (currentPoolName) {
-        data = await hypergryphAPI.getGachaGlobalStats(currentPoolName)
-        if (data?.stats) periodLabel = '当期UP'
-      }
-    }
-
-    const s = data.stats
-    const totalPulls = s.total_pulls ?? 0
-    const totalUsers = s.total_users ?? 0
-    const star6 = s.star6_total ?? 0
-    const star5 = s.star5_total ?? 0
-    const star4 = s.star4_total ?? 0
-    const avgPity = s.avg_pity != null ? Number(s.avg_pity).toFixed(2) : '-'
-    const pool = s.current_pool
-    const biliUp = await this.getCurrentUpFromBiliWiki()
-    const upName = (pool?.up_char_name || (pool?.up_char_names && pool.up_char_names[0]) || (biliUp?.upCharName && biliUp.upCharName.trim()) || '-').trim()
-    const upCharNames = (pool?.up_char_names && pool.up_char_names.length) ? pool.up_char_names : (biliUp?.upCharNames?.length ? biliUp.upCharNames : [upName].filter(Boolean))
-    const upCharId = pool?.up_char_id || ''
-    const byChannel = s.by_channel
-    const officialRaw = byChannel?.official
-    const bilibiliRaw = byChannel?.bilibili
-    const fmt = (v) => (v != null ? Number(v).toFixed(2) : '-')
-    const syncTime = this.formatGlobalStatsSyncTime(data.cached, data.last_update)
-    const byType = s.by_type || {}
-    const official = officialRaw ? {
-      total_users: officialRaw.total_users ?? 0,
-      total_pulls: officialRaw.total_pulls ?? 0,
-      star6_total: officialRaw.star6_total ?? 0,
-      avg_pity: fmt(officialRaw.avg_pity)
-    } : null
-    const bilibili = bilibiliRaw ? {
-      total_users: bilibiliRaw.total_users ?? 0,
-      total_pulls: bilibiliRaw.total_pulls ?? 0,
-      star6_total: bilibiliRaw.star6_total ?? 0,
-      avg_pity: fmt(bilibiliRaw.avg_pity)
-    } : null
-    const rankingLimited = s.ranking?.limited?.six_star || []
-    const upEntry = rankingLimited.find((r) => r.char_id === upCharId) ??
-      rankingLimited.find((r) => this.isGlobalRankingUpChar(r, upCharNames, upCharId)) ??
-      rankingLimited.find((r) => r.char_name === upName)
-    const upWinRatePercent = (upEntry?.percent != null ? Number(upEntry.percent).toFixed(1) : '--.-')
-    const upWinRateNum = (upEntry?.percent != null ? Math.min(100, Math.max(0, Number(upEntry.percent))) : 0)
-    const upWeaponNameStr = (pool?.up_weapon_name && pool.up_weapon_name.trim()) ? pool.up_weapon_name.trim() : (biliUp?.upWeaponName && biliUp.upWeaponName.trim() ? biliUp.upWeaponName.trim() : '')
-    const rankingWeapon = s.ranking?.weapon?.six_star || []
-    const upWeaponEntry = upWeaponNameStr ? rankingWeapon.find((r) => {
-      const n = (r.char_name || '').trim()
-      return n === upWeaponNameStr || n.includes(upWeaponNameStr) || upWeaponNameStr.includes(n)
-    }) : null
-    const upWeaponWinRatePercent = (upWeaponEntry?.percent != null ? Number(upWeaponEntry.percent).toFixed(1) : '--.-')
-    const upWeaponWinRateNum = (upWeaponEntry?.percent != null ? Math.min(100, Math.max(0, Number(upWeaponEntry.percent))) : 0)
-
-    if (this.e?.runtime?.render) {
-      try {
-        const standardSec = this.buildGlobalPoolSection(s, byType, {
-          key: 'standard',
-          label: '常驻角色'
-        })
-        const beginnerSec = this.buildGlobalPoolSection(s, byType, {
-          key: 'beginner',
-          label: '新手池',
-          showRanking: false
-        })
-        const weaponSec = this.buildGlobalPoolSection(s, byType, {
-          key: 'weapon',
-          label: '武器池'
-        })
-        const limitedSec = this.buildGlobalPoolSection(s, byType, {
-          key: 'limited',
-          label: periodLabel === '当期UP' ? '限定 · 当期UP' : `限定 · ${periodLabel}`,
-          rankTop: 10,
-          upCharNames,
-          upCharId
-        })
-        const poolSections = [beginnerSec, standardSec, weaponSec, limitedSec]
-
-        const renderData = {
-          title: '全服寻访统计',
-          periodLabel,
-          syncTime,
-          totalPulls,
-          totalUsers,
-          star6,
-          globalAvgPity: s.avg_pity != null ? Number(s.avg_pity).toFixed(2) : '-',
-          showUpBlock: !!(upName && upName !== '-') || !!(upWeaponNameStr && upWeaponNameStr !== ''),
-          upName,
-          upWeaponName: upWeaponNameStr,
-          upWinRate: upWinRatePercent + '%',
-          upWinRateNum,
-          upWeaponWinRate: upWeaponWinRatePercent + '%',
-          upWeaponWinRateNum,
-          official,
-          bilibili,
-          poolSections,
-          pluResPath,
-          periodHint: '发送 :全服抽卡统计 <干员名> 可查看其他期数',
-          ...getCopyright()
-        }
-        const imgSegment = await this.e.runtime.render('endfield-plugin', 'gacha/global-stats', renderData, { scale: 1.6, retType: 'base64' })
-        if (imgSegment) {
-          await this.reply(imgSegment)
-          return true
-        }
-      } catch (err) {
-        logger.error(`[终末地插件][全服抽卡统计]渲染图失败: ${err?.message || err}`)
-      }
-    }
-
-    let text = '【全服抽卡统计】'
-    if (periodLabel !== '当期UP') text += ` · ${periodLabel}`
-    text += '\n'
-    text += `总抽数：${totalPulls} | 统计用户：${totalUsers}\n`
-    text += `六星：${star6} | 五星：${star5} | 四星：${star4} | 平均出货：${avgPity} 抽\n`
-    text += `当前UP：${upName}\n`
-    if (officialRaw || bilibiliRaw) {
-      if (officialRaw) text += `官服：${officialRaw.total_users ?? 0} 人，${officialRaw.total_pulls ?? 0} 抽，均出 ${fmt(officialRaw.avg_pity)}\n`
-      if (bilibiliRaw) text += `B服：${bilibiliRaw.total_users ?? 0} 人，${bilibiliRaw.total_pulls ?? 0} 抽，均出 ${fmt(bilibiliRaw.avg_pity)}\n`
-    }
-    text += '\n发送 :全服抽卡统计 <干员名> 可查看其他期数\n'
-    if (data.cached === true) text += '（缓存约 5 分钟）'
-    else if (data.last_update) text += `更新时间：${data.last_update}`
-    await this.reply(text)
-    return true
-  }
 
   /** 同步全部抽卡：管理员专用，为所有已绑定用户触发抽卡同步（仅发起请求，不轮询等待）；账号间间隔约 3 秒避免并发过高 */
   async syncAllGacha() {
@@ -1743,16 +1531,25 @@ export class EndfieldGacha extends plugin {
     const statusData = await hypergryphAPI.getGachaSyncStatus(token, query)
     if (statusData?.status === 'syncing') {
       const { message, progress, stage, current_pool, records_found, completed_pools, total_pools, elapsed_seconds } = statusData
-      const rawMsg = message || (current_pool ? `正在查询${current_pool}...` : '')
+      const rawMsg = message || (current_pool ? getMessage('gacha.sync_query_pool', { pool: current_pool }) : '')
       const progressMsg = this.formatProgressMsg(rawMsg, this.e.user_id, this.e.sender?.nickname || this.e.sender?.card)
-      if (progressMsg) logger.mark(`[终末地插件][抽卡同步] ${progressMsg}`)
-      const stageLabel = { grant: '验证 Token', bindings: '获取绑定账号', u8token: '获取访问凭证', records: '获取抽卡记录', saving: '保存数据' }[stage] || stage || ''
+      const stageLabel = {
+        grant: getMessage('gacha.sync_stage_grant'),
+        bindings: getMessage('gacha.sync_stage_bindings'),
+        u8token: getMessage('gacha.sync_stage_u8token'),
+        records: getMessage('gacha.sync_stage_records'),
+        saving: getMessage('gacha.sync_stage_saving')
+      }[stage] || stage || ''
       let msg = getMessage('gacha.sync_in_progress') + '\n'
-      msg += `进度：${progress ?? 0}%`
-      if (total_pools != null && completed_pools != null) msg += ` | 卡池 ${completed_pools}/${total_pools}`
-      if (records_found != null) msg += ` | 已获取 ${records_found} 条`
-      if (elapsed_seconds != null) msg += ` | 已用 ${Math.round(elapsed_seconds)} 秒`
-      if (stageLabel) msg += `\n阶段：${stageLabel}`
+      msg += getMessage('gacha.sync_progress_line', {
+        progress: progress ?? 0,
+        pools: (total_pools != null && completed_pools != null)
+          ? getMessage('gacha.sync_progress_pools', { completed: completed_pools, total: total_pools })
+          : '',
+        records: records_found != null ? getMessage('gacha.sync_progress_records', { records: records_found }) : '',
+        elapsed: elapsed_seconds != null ? getMessage('gacha.sync_progress_elapsed', { seconds: Math.round(elapsed_seconds) }) : ''
+      })
+      if (stageLabel) msg += '\n' + getMessage('gacha.sync_progress_stage', { stage: stageLabel })
       await this.reply(msg)
       return true
     }
@@ -1813,50 +1610,6 @@ export class EndfieldGacha extends plugin {
     return { error: getMessage('gacha.no_accounts') }
   }
 
-  /** 兼容历史“序号选择账号”流程：新流程已改为当前激活绑定直连，此处仅处理旧 pending */
-  async receiveGachaSelect() {
-    const raw = await redis.get(GACHA_KEYS.pending(this.e.user_id))
-    if (!raw) return false // 无待选状态时不消费消息，让其他插件处理
-    let data
-    try {
-      data = JSON.parse(raw)
-    } catch {
-      await redis.del(GACHA_KEYS.pending(this.e.user_id))
-      return true
-    }
-    const msg = (this.e.msg || '').trim().replace(/^(?:[:：]|[/#](?:zmd|终末地))\s*/, '')
-    const index = parseInt(msg, 10)
-    if (!Number.isFinite(index) || index < 1 || index > (data.accounts?.length || 0)) {
-      await this.reply(getMessage('gacha.invalid_index'))
-      return true
-    }
-    await redis.del(GACHA_KEYS.pending(this.e.user_id))
-    await this.reply(getMessage('gacha.account_selected'))
-    const account = data.accounts[index - 1]
-    const selectedUid = account?.uid || null
-    const selectedRoleId = this.getAccountRoleId(account)
-    const selectedServerId = this.getAccountServerId(account)
-    const targetUserId = data.target_user_id || this.e.user_id
-    const qqName = this.e.sender?.nickname || this.e.sender?.card || String(this.e.user_id)
-    
-    // 用户选择账号后，发送开始同步提示
-    if (data.fromSync || data.fromAnalysis) {
-      const isFirstSync = data.isFirstSync ?? false
-      if (data.fromAnalysis) {
-        await this.reply(getMessage('gacha.analysis_sync_start'))
-      } else {
-        await this.reply(getMessage(isFirstSync ? 'gacha.auth_full_sync' : 'gacha.sync_start'))
-      }
-    }
-    
-    await this.startFetchAndPoll(data.token, selectedUid, selectedRoleId, selectedServerId, targetUserId, qqName, {
-      afterSyncSendAnalysis: data.afterSyncSendAnalysis,
-      fromAnalysis: data.fromAnalysis,
-      fromSync: data.fromSync
-    })
-    return true
-  }
-
   /**
    * 启动同步任务并轮询直到 completed / failed
    * 同步流程：当前激活绑定 -> fetch(role_id/server_id) -> status 轮询 -> records 落本地缓存
@@ -1910,11 +1663,10 @@ export class EndfieldGacha extends plugin {
         if (!statusData) continue
         const { status, message, records_found, new_records, error, current_pool } = statusData
         if (status === 'syncing' && (message || current_pool)) {
-          const rawMsg = message || (current_pool ? `正在查询${current_pool}...` : '')
+          const rawMsg = message || (current_pool ? getMessage('gacha.sync_query_pool', { pool: current_pool }) : '')
           const progressMsg = this.formatProgressMsg(rawMsg, userId, qqName)
           if (progressMsg && progressMsg !== lastProgressMessage) {
             lastProgressMessage = progressMsg
-            logger.mark(`[终末地插件][抽卡同步] ${progressMsg}`)
           }
         }
         if (status === 'completed') {
@@ -1925,10 +1677,10 @@ export class EndfieldGacha extends plugin {
           const stats = statsData?.stats || {}
           if (stats.limited_char_count != null || stats.standard_char_count != null || stats.beginner_char_count != null || stats.weapon_count != null) {
             const parts = []
-            if (stats.limited_char_count != null) parts.push(`限定池 ${stats.limited_char_count} 条`)
-            if (stats.standard_char_count != null) parts.push(`常驻池 ${stats.standard_char_count} 条`)
-            if (stats.beginner_char_count != null) parts.push(`新手池 ${stats.beginner_char_count} 条`)
-            if (stats.weapon_count != null) parts.push(`武器池 ${stats.weapon_count} 条`)
+            if (stats.limited_char_count != null) parts.push(getMessage('gacha.sync_done_pool_limited', { count: stats.limited_char_count }))
+            if (stats.standard_char_count != null) parts.push(getMessage('gacha.sync_done_pool_standard', { count: stats.standard_char_count }))
+            if (stats.beginner_char_count != null) parts.push(getMessage('gacha.sync_done_pool_beginner', { count: stats.beginner_char_count }))
+            if (stats.weapon_count != null) parts.push(getMessage('gacha.sync_done_pool_weapon', { count: stats.weapon_count }))
             if (parts.length) poolLine = '\n' + getMessage('gacha.sync_done_pools', { pools: parts.join(' | ') }).trim()
           }
           const syncDoneMsg = getMessage('gacha.sync_done', {

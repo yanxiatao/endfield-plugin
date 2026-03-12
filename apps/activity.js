@@ -41,18 +41,22 @@ function getRemainingOrOpensText(nowTs, startTs, endTs) {
   let opensInText = ''
   if (startTs != null && nowTs < startTs) {
     const daysUntil = Math.max(0, Math.ceil((startTs - nowTs) / DAY_SEC))
-    opensInText = daysUntil < 30 ? `${daysUntil}日后开启` : daysUntil < 60 ? '1个月后开启' : `${Math.floor(daysUntil / 30)}个月后开启`
+    opensInText = daysUntil < 30
+      ? getMessage('activity.opens_in_days', { days: daysUntil })
+      : daysUntil < 60
+        ? getMessage('activity.opens_in_one_month')
+        : getMessage('activity.opens_in_months', { months: Math.floor(daysUntil / 30) })
   } else if (endTs != null) {
     const diff = endTs - nowTs
-    if (diff <= 0) remainingText = '已结束'
+    if (diff <= 0) remainingText = getMessage('activity.remaining_ended')
     else {
       const daysLeft = Math.floor(diff / DAY_SEC)
-      if (daysLeft <= 0) remainingText = '即将结束'
-      else if (daysLeft < 30) remainingText = `${daysLeft}天后结束`
-      else if (daysLeft < 60) remainingText = '1个月后结束'
-      else remainingText = `${Math.floor(daysLeft / 30)}个月后结束`
+      if (daysLeft <= 0) remainingText = getMessage('activity.remaining_soon')
+      else if (daysLeft < 30) remainingText = getMessage('activity.remaining_days', { days: daysLeft })
+      else if (daysLeft < 60) remainingText = getMessage('activity.remaining_one_month')
+      else remainingText = getMessage('activity.remaining_months', { months: Math.floor(daysLeft / 30) })
     }
-  } else remainingText = '长期有效'
+  } else remainingText = getMessage('activity.remaining_long')
   return { remainingText, opensInText }
 }
 
@@ -76,7 +80,7 @@ function normalizeActivities(rawData) {
     else if (item.end_time) endTime = new Date(item.end_time).toLocaleString('zh-CN')
     return {
       index: index + 1,
-      name: item.name || '未知',
+      name: item.name || getMessage('common.unknown'),
       description: item.description || '',
       cover: item.pic || item.cover || '',
       startTime,
@@ -116,32 +120,23 @@ function buildCalendarData(activities, dayCount = 20, daysBefore = 0) {
   const outOfRange = []
 
   for (const a of activities) {
-    let remainingText = ''
-    if (a.endTs) {
-      const diff = a.endTs - nowTs
-      if (diff <= 0) remainingText = '已结束'
-      else {
-        const daysLeft = Math.floor(diff / DAY_SEC)
-        if (daysLeft <= 0) remainingText = '即将结束'
-        else if (daysLeft < 30) remainingText = `${daysLeft}天后结束`
-        else if (daysLeft < 60) remainingText = '1个月后结束'
-        else remainingText = `${Math.floor(daysLeft / 30)}个月后结束`
-      }
-    } else remainingText = '长期有效'
+    const { remainingText, opensInText } = getRemainingOrOpensText(nowTs, a.startTs, a.endTs)
 
     const shortStart = (a.startTs != null) ? formatShortTs(a.startTs) : a.startTime || '-'
     const shortEnd = (a.endTs != null) ? formatShortTs(a.endTs) : a.endTime || '-'
     const notStarted = a.startTs != null && a.startTs > nowTs
     const daysUntilStart = notStarted && a.startTs != null ? Math.max(0, Math.ceil((a.startTs - nowTs) / DAY_SEC)) : 0
-    const opensInText = notStarted ? `${daysUntilStart}日后开启` : ''
-    const startLabel = notStarted ? `${formatMonthDay(a.startTs)}开启` : `开始 ${shortStart}`
-    const endLabel = `结束 ${shortEnd}`
-    const timeLine = `${startLabel} ～ ${endLabel}`
+    const opensInTextOverride = notStarted ? getMessage('activity.opens_in_days', { days: daysUntilStart }) : ''
+    const startLabel = notStarted
+      ? getMessage('activity.opens_label', { date: formatMonthDay(a.startTs) })
+      : getMessage('activity.start_label', { time: shortStart })
+    const endLabel = getMessage('activity.end_label', { time: shortEnd })
+    const timeLine = `${startLabel}${getMessage('activity.time_range_separator')}${endLabel}`
 
     const overlaps = (a.startTs != null && a.endTs != null)
       ? (a.endTs >= startDayTs && a.startTs <= endDayTs)
       : true
-    const item = { ...a, remainingText, opensInText, shortStart, shortEnd, startLabel, endLabel, timeLine }
+    const item = { ...a, remainingText, opensInText: opensInTextOverride || opensInText, shortStart, shortEnd, startLabel, endLabel, timeLine }
 
     if (overlaps) {
       let startCol = 0
@@ -227,11 +222,13 @@ export class EndfieldActivity extends plugin {
               const shortStart = startTs != null ? formatShortTs(startTs) : (a.start_time || '-')
               const shortEnd = endTs != null ? formatShortTs(endTs) : (a.end_time || '-')
               const notStarted = startTs != null && startTs > nowTs
-              const startLabel = notStarted && startTs != null ? `${formatMonthDay(startTs)}开启` : `开始 ${shortStart}`
-              const endLabel = `结束 ${shortEnd}`
-              const timeLine = `${startLabel} ～ ${endLabel}`
+              const startLabel = notStarted && startTs != null
+                ? getMessage('activity.opens_label', { date: formatMonthDay(startTs) })
+                : getMessage('activity.start_label', { time: shortStart })
+              const endLabel = getMessage('activity.end_label', { time: shortEnd })
+              const timeLine = `${startLabel}${getMessage('activity.time_range_separator')}${endLabel}`
               return {
-                name: a.name || '未知',
+                name: a.name || getMessage('common.unknown'),
                 type: a.type || '',
                 timeStr,
                 description: (a.description || '').trim(),
@@ -301,8 +298,8 @@ export class EndfieldActivity extends plugin {
         const viewportHeight = 800
         const baseOpt = { scale: 1.6, retType: 'base64' }
         const renderData = {
-          title: '活动列表',
-          subtitle: `共 ${activities.length} 个活动`,
+          title: getMessage('activity.text_title'),
+          subtitle: getMessage('activity.text_subtitle', { count: activities.length }),
           days,
           dayCount,
           todayColIndex: todayColIndex >= 0 ? todayColIndex : 15,
@@ -323,23 +320,24 @@ export class EndfieldActivity extends plugin {
       }
     }
 
-    let msg = '【活动列表】\n\n'
+    let msg = getMessage('activity.text_title_wrapped') + '\n\n'
     if (currentUpList.length > 0) {
-      msg += '【本期 UP】\n'
+      msg += getMessage('activity.text_up_title') + '\n'
       currentUpList.forEach((a) => {
         const timeLabel = a.opensInText || a.remainingText || ''
-        msg += `${a.is_active ? '▶ ' : ''}${a.name}${timeLabel ? ` ${timeLabel}` : ''}\n`
-        msg += `类型：${a.type}${a.timeStr ? ` | ${a.timeStr}` : ''}\n`
+        const activePrefix = a.is_active ? getMessage('activity.text_up_active_prefix') : ''
+        msg += `${activePrefix}${a.name}${timeLabel ? ` ${timeLabel}` : ''}\n`
+        msg += getMessage('activity.text_type_line', { type: a.type, time: a.timeStr ? ` | ${a.timeStr}` : '' }) + '\n'
         if (a.description) msg += `${a.description}\n`
         msg += '\n'
       })
-      msg += '────────────\n\n'
+      msg += getMessage('activity.text_separator') + '\n\n'
     }
     activities.forEach((a) => {
-      msg += `[${a.index}] ${a.name}\n`
-      if (a.description) msg += `    ${a.description}\n`
-      if (a.startTime) msg += `    开始：${a.startTime}\n`
-      if (a.endTime) msg += `    结束：${a.endTime}\n`
+      msg += getMessage('activity.text_item_line', { index: a.index, name: a.name }) + '\n'
+      if (a.description) msg += getMessage('activity.text_item_desc', { desc: a.description }) + '\n'
+      if (a.startTime) msg += getMessage('activity.text_item_start', { time: a.startTime }) + '\n'
+      if (a.endTime) msg += getMessage('activity.text_item_end', { time: a.endTime }) + '\n'
       msg += '\n'
     })
     await this.reply(msg.trim())

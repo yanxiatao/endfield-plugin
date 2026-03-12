@@ -31,7 +31,6 @@ function startAuthPollingTask() {
         if (authPollingTimer) {
           clearInterval(authPollingTimer)
           authPollingTimer = null
-          logger.mark('[终末地插件][授权轮询]服务器健康检测不通过，暂停轮询，等待恢复')
         }
         startHealthRecoveryCheck()
         return
@@ -50,7 +49,6 @@ function startAuthPollingTask() {
         if (healthy) {
           clearInterval(healthRecoveryTimer)
           healthRecoveryTimer = null
-          logger.mark('[终末地插件][授权轮询]服务器已恢复，重新启动授权轮询')
           authPollingTimer = setInterval(runPolling, POLL_INTERVAL_MS)
           await runPolling()
         }
@@ -63,7 +61,6 @@ function startAuthPollingTask() {
   function ensureIntervalStarted() {
     if (authPollingTimer || healthRecoveryTimer) return
     authPollingTimer = setInterval(runPolling, POLL_INTERVAL_MS)
-    logger.mark('[终末地插件][授权轮询]定时轮询已启动，间隔 ' + (POLL_INTERVAL_MS / 60000) + ' 分钟')
   }
 
   // 延迟执行第一次轮询，且无论成功/抛错都确保启动定时器
@@ -73,7 +70,6 @@ function startAuthPollingTask() {
       .finally(ensureIntervalStarted)
   }, AUTH_POLLING_START_DELAY_MS)
 
-  logger.mark('[终末地插件]网页授权状态轮询任务已注册，' + (AUTH_POLLING_START_DELAY_MS / 1000) + ' 秒后执行首次检查')
 }
 
 /**
@@ -102,7 +98,6 @@ async function checkAllAuthBindings() {
       logger.error(`[终末地插件][授权轮询]检查用户 ${userId} 失败: ${err}`)
     }
   }
-  logger.mark(`[终末地插件][授权轮询]本轮完成，共检查 ${keys.length} 个用户`)
 }
 
 /**
@@ -129,7 +124,6 @@ async function checkUserAuthBindings(userId) {
   if (cleaned.length !== accounts.length) {
     accounts = cleaned
     await saveUserBindings(userId, accounts)
-    logger.mark(`[终末地插件][授权轮询]用户 ${userId} 已清理 ${accounts.length - cleaned.length} 条无效本地记录`)
   }
 
   // 2. 检查网页授权类型的远程状态（按 client_id 分组查询）
@@ -169,7 +163,6 @@ async function checkUserAuthBindings(userId) {
         acc.is_active = false
         hasChanges = true
         revokedAccounts.push(acc)
-        logger.mark(`[终末地插件][授权轮询]用户 ${userId} 的授权 ${acc.framework_token.substring(0, 8)}... (${acc.nickname}) 已失效`)
       }
     }
   }
@@ -179,7 +172,7 @@ async function checkUserAuthBindings(userId) {
     await saveUserBindings(userId, accounts)
     if (revokedAccounts.length > 0) {
       try {
-        const nicknames = revokedAccounts.map(acc => acc.nickname || '未知').join('、')
+        const nicknames = revokedAccounts.map(acc => acc.nickname || getMessage('common.unknown')).join('、')
         const notifyMsg = getMessage('enduid.auth_auto_revoked', { nickname: nicknames })
         if (Bot?.pickUser) {
           await Bot.pickUser(userId).sendMsg(notifyMsg)
@@ -267,6 +260,7 @@ export class EndfieldUid extends plugin {
       for (const item of list) {
         const bindingInfo = item?.binding_info || {}
         const roleId = String(bindingInfo.role_id || '')
+        const gameRoleId = String(bindingInfo.game_role_id || bindingInfo.gameRoleId || '')
         if (!roleId) continue
         const ts = item?.created_at ? new Date(item.created_at).getTime() : Date.now()
         out.push({
@@ -274,6 +268,7 @@ export class EndfieldUid extends plugin {
           binding_id: item?.binding_id || item?.id || '',
           user_identifier: userId,
           role_id: roleId,
+          ...(gameRoleId ? { game_role_id: gameRoleId } : {}),
           nickname: String(bindingInfo.nickname || ''),
           server_id: String(bindingInfo.server_id || 1),
           channel_name: String(bindingInfo.channel_name || ''),
@@ -339,6 +334,7 @@ export class EndfieldUid extends plugin {
 
     const bindingInfo = remote.binding_info || {}
     const roleId = remote.role_id ?? bindingInfo.role_id
+    const gameRoleId = remote.game_role_id ?? bindingInfo.game_role_id ?? bindingInfo.gameRoleId
     const nickname = remote.nickname ?? bindingInfo.nickname
     const serverId = remote.server_id ?? bindingInfo.server_id
     const channelName = remote.channel_name ?? bindingInfo.channel_name
@@ -348,6 +344,9 @@ export class EndfieldUid extends plugin {
     return {
       ...localAccount,
       role_id: roleId != null && roleId !== '' ? String(roleId) : localAccount.role_id,
+      ...(gameRoleId != null && gameRoleId !== ''
+        ? { game_role_id: String(gameRoleId) }
+        : {}),
       nickname: nickname != null && nickname !== '' ? String(nickname) : localAccount.nickname,
       server_id: serverId != null && serverId !== '' ? String(serverId) : localAccount.server_id,
       channel_name: channelName != null && channelName !== '' ? String(channelName) : localAccount.channel_name,
@@ -370,7 +369,6 @@ export class EndfieldUid extends plugin {
       const changed = JSON.stringify(synced) !== JSON.stringify(accounts)
       if (changed) {
         await saveUserBindings(this.e.user_id, synced)
-        logger.mark(`[终末地插件][登录后回填]已更新 binding_id，共 ${synced.length} 个账号`)
       }
       return synced
     } catch (err) {
@@ -385,6 +383,9 @@ export class EndfieldUid extends plugin {
       binding_id: bindingData.id,
       user_identifier: String(this.e.user_id),
       role_id: String(bindingData.role_id || ''),
+      ...(bindingData.game_role_id != null && bindingData.game_role_id !== ''
+        ? { game_role_id: String(bindingData.game_role_id) }
+        : {}),
       nickname: bindingData.nickname || '',
       server_id: String(bindingData.server_id || 1),
       ...(bindingData.channel_name != null && String(bindingData.channel_name).trim() !== ''
@@ -448,9 +449,8 @@ export class EndfieldUid extends plugin {
     await saveUserBindings(this.e.user_id, accounts)
     // 绑定成功后自动发送干员列表（静默模式，不发加载提示，失败不影响绑定流程）
     try {
-      const operatorInstance = new EndfieldOperator()
-      operatorInstance.e = this.e
-      await operatorInstance.getOperatorList({ silent: true })
+      const current = accounts.find(acc => String(acc.role_id || '') === newRoleId) || newAccount
+      await this.sendOperatorListAfterLogin([current], frameworkToken)
     } catch (err) {
       logger.error(`[终末地插件][绑定]绑定成功后发送干员列表失败: ${err}`)
     }
@@ -469,6 +469,9 @@ export class EndfieldUid extends plugin {
 
       out.push({
         role_id: roleId,
+        ...(role?.game_role_id != null && role?.game_role_id !== ''
+          ? { game_role_id: String(role.game_role_id) }
+          : {}),
         server_id: String(role?.server_id || 1),
         server_name: String(role?.server_name || ''),
         nickname: String(role?.nickname || ''),
@@ -518,6 +521,9 @@ export class EndfieldUid extends plugin {
         binding_id: item.id || item.binding_id || roleId,
         user_identifier: String(this.e.user_id),
         role_id: roleId,
+        ...(item?.game_role_id != null && item?.game_role_id !== ''
+          ? { game_role_id: String(item.game_role_id) }
+          : {}),
         nickname: item.nickname || '',
         server_id: String(item.server_id || 1),
         ...(item.channel_name != null && String(item.channel_name).trim() !== ''
@@ -567,34 +573,44 @@ export class EndfieldUid extends plugin {
       })
       .filter(Boolean)
 
-    const lines = ['[ 登录成功 ]', '──────────────', `本次登录账号 ${currentBatch.length} 个`]
+    const lines = [
+      getMessage('enduid.login_success_header'),
+      getMessage('enduid.login_success_separator'),
+      getMessage('enduid.login_success_batch', { count: currentBatch.length })
+    ]
     currentBatch.forEach((acc, idx) => {
-      lines.push(`${idx + 1}. ${acc.nickname || '未知'} | UID ${acc.role_id || '未知'} | ${acc.channel_name || acc.server_id || '未知服'}`)
+      lines.push(getMessage('enduid.login_success_item', {
+        index: idx + 1,
+        nickname: acc.nickname || getMessage('common.unknown'),
+        role_id: acc.role_id || getMessage('common.unknown'),
+        server_label: acc.channel_name || acc.server_id || getMessage('enduid.server_unknown')
+      }))
     })
-    lines.push(`已绑定总数 ${accounts.length}`)
+    lines.push(getMessage('enduid.login_success_total', { count: accounts.length }))
     await this.reply(lines.join('\n'))
 
     await saveUserBindings(this.e.user_id, accounts)
     // 多账号登录后按账号生成干员列表，并使用合并转发发送
     try {
-      await this.sendOperatorListForwardByAccounts(currentBatch, frameworkToken)
+      await this.sendOperatorListAfterLogin(currentBatch, frameworkToken)
     } catch (err) {
       logger.error(`[终末地插件][绑定]绑定成功后发送干员列表失败: ${err}`)
     }
     return true
   }
 
-  async sendOperatorListForwardByAccounts(accounts = [], frameworkToken = '') {
+  async sendOperatorListAfterLogin(accounts = [], frameworkToken = '') {
     const targets = (Array.isArray(accounts) ? accounts : [])
-      .filter(acc => acc && acc.role_id)
+      .filter(acc => acc && (acc.role_id || acc.game_role_id))
       .map(acc => ({
         role_id: String(acc.role_id || ''),
+        game_role_id: String(acc.game_role_id || ''),
         server_id: Number(acc.server_id || 1),
         nickname: String(acc.nickname || ''),
         channel_name: String(acc.channel_name || ''),
         framework_token: String(acc.framework_token || frameworkToken || '')
       }))
-      .filter(acc => acc.role_id && acc.framework_token)
+      .filter(acc => (acc.role_id || acc.game_role_id) && acc.framework_token)
 
     if (targets.length === 0) return
 
@@ -602,14 +618,15 @@ export class EndfieldUid extends plugin {
     operatorInstance.e = this.e
     const rendered = []
     for (const acc of targets) {
+      const roleId = acc.game_role_id || acc.role_id
       const img = await operatorInstance.getOperatorList({
         silent: true,
         retImage: true,
         frameworkToken: acc.framework_token,
-        roleId: acc.role_id,
+        roleId,
         serverId: acc.server_id
       })
-      if (img) rendered.push({ ...acc, img })
+      if (img) rendered.push({ ...acc, role_id: roleId, img })
     }
     if (rendered.length === 0) return
 
@@ -619,10 +636,14 @@ export class EndfieldUid extends plugin {
     }
 
     const forwardParts = rendered.map((item) => [
-      `【${item.nickname || '未知'}】UID ${item.role_id} | ${item.channel_name || item.server_id || '未知服'}`,
+      getMessage('enduid.operator_list_item', {
+        nickname: item.nickname || getMessage('common.unknown'),
+        role_id: item.role_id || getMessage('common.unknown'),
+        server_label: item.channel_name || item.server_id || getMessage('enduid.server_unknown')
+      }),
       item.img
     ])
-    const forwardMsg = common.makeForwardMsg(this.e, forwardParts, '终末地干员列表')
+    const forwardMsg = common.makeForwardMsg(this.e, forwardParts, getMessage('enduid.operator_list_title'))
     await this.e.reply(forwardMsg)
   }
 
@@ -635,7 +656,7 @@ export class EndfieldUid extends plugin {
     const match = String(this.e.msg || '').match(/^(?:[:：]|[/#](?:zmd|终末地))(?:绑定|登陆|登录)(?:\s+(.+))?$/)
     const cred = String(match?.[1] || '').trim()
     if (!cred) {
-      await this.reply('请发送「:绑定 <Cred>」进行登录绑定')
+      await this.reply(getMessage('enduid.cred_bind_usage', { prefix: ':' }))
       return true
     }
 
@@ -656,20 +677,6 @@ export class EndfieldUid extends plugin {
       const userIdentifier = String(this.e.user_id)
       const availableRoles = this.normalizeAvailableRoles(loginData.available_roles || [])
 
-      // 兼容后端仅返回 endfield_binding 的场景
-      if (availableRoles.length === 0 && loginData.endfield_binding?.role_id) {
-        const fallbackRoles = this.normalizeAvailableRoles([{
-          role_id: loginData.endfield_binding.role_id,
-          server_id: loginData.endfield_binding.server_id,
-          server_name: loginData.endfield_binding.server_name,
-          nickname: loginData.endfield_binding.nickname,
-          skland_uid: loginData.endfield_binding.skland_uid,
-          channel_name: loginData.endfield_binding.channel_name,
-          level: loginData.endfield_binding.level,
-          is_default: true
-        }])
-        availableRoles.push(...fallbackRoles)
-      }
       const defaultRoleId = String(
         availableRoles.find(role => role?.is_default)?.role_id
         || availableRoles[0]?.role_id
@@ -686,9 +693,11 @@ export class EndfieldUid extends plugin {
           role
         )
         if (!bindingRes) continue
+        const gameRoleId = bindingRes.game_role_id ?? role.game_role_id ?? role.gameRoleId
         createdBindings.push({
           id: bindingRes.id || bindingRes.binding_id || role.role_id,
           role_id: String(bindingRes.role_id || role.role_id || ''),
+          ...(gameRoleId != null && gameRoleId !== '' ? { game_role_id: String(gameRoleId) } : {}),
           nickname: bindingRes.nickname || role.nickname || '',
           server_id: String(bindingRes.server_id || role.server_id || 1),
           channel_name: bindingRes.channel_name || role.channel_name || '',
@@ -832,7 +841,7 @@ export class EndfieldUid extends plugin {
       const qrcodeBase64 = qrData.qrcode
       const qrCodeBuffer = Buffer.from(qrcodeBase64.replace(/^data:image\/\w+;base64,/, ''), 'base64')
       const msg = [
-        '请使用森空岛APP扫描二维码进行登陆，二维码有效时间约3分钟。\n⚠️ 请不要扫描他人的登录二维码！',
+        getMessage('enduid.qr_scan_prompt'),
         segment.image(qrCodeBuffer)
       ]
       const qrCodeSent = await this.reply(msg)
@@ -893,9 +902,11 @@ export class EndfieldUid extends plugin {
           role
         )
         if (!bindingRes) continue
+        const gameRoleId = bindingRes.game_role_id ?? role.game_role_id ?? role.gameRoleId
         createdBindings.push({
           id: bindingRes.id || bindingRes.binding_id || role.role_id,
           role_id: String(bindingRes.role_id || role.role_id || ''),
+          ...(gameRoleId != null && gameRoleId !== '' ? { game_role_id: String(gameRoleId) } : {}),
           nickname: bindingRes.nickname || role.nickname || '',
           server_id: String(bindingRes.server_id || role.server_id || 1),
           channel_name: bindingRes.channel_name || role.channel_name || '',
@@ -1013,11 +1024,16 @@ export class EndfieldUid extends plugin {
       logger.warn(`[终末地插件][绑定列表]远程绑定列表同步失败，使用本地缓存: ${err?.message || err}`)
     }
 
-    const loginTypeLabel = { qr: '扫码', phone: '手机号', auth: '网页授权', cred: 'Cred' }
+    const loginTypeLabel = {
+      qr: getMessage('enduid.login_type_qr'),
+      phone: getMessage('enduid.login_type_phone'),
+      auth: getMessage('enduid.login_type_auth'),
+      cred: getMessage('enduid.login_type_cred')
+    }
     const serverLabel = (acc = {}) => {
       const channelName = String(acc?.channel_name || '').trim()
       if (channelName) return channelName
-      return '未知'
+      return getMessage('common.unknown')
     }
 
     // 并行获取每个绑定的游戏数据（头像、等级），用索引作为 key 避免 role_id 类型不一致导致互相覆盖
@@ -1046,17 +1062,17 @@ export class EndfieldUid extends plugin {
 
     // 直接使用本地账号数据构建列表，按索引取对应游戏数据
     const bindingItems = accounts.map((acc, index) => {
-      const typeLabel = loginTypeLabel[acc.login_type] || '未知'
+      const typeLabel = loginTypeLabel[acc.login_type] || getMessage('common.unknown')
       const gameData = gameDataByIndex[index] || {}
-      const bindTime = acc.bind_time ? new Date(acc.bind_time).toLocaleString('zh-CN') : '未知'
+      const bindTime = acc.bind_time ? new Date(acc.bind_time).toLocaleString('zh-CN') : getMessage('common.unknown')
       const authDisplay = authDisplayByRoleId.get(String(acc.role_id || '')) || {}
       const finalLevel = authDisplay.level || gameData.level || 0
-      const finalName = authDisplay.nickname || acc.nickname || gameData.name || '未知'
+      const finalName = authDisplay.nickname || acc.nickname || gameData.name || getMessage('common.unknown')
       
       return {
         index: index + 1,
         nickname: finalName,
-        role_id: acc.role_id || '未知',
+        role_id: acc.role_id || getMessage('common.unknown'),
         server_label: serverLabel(acc),
         type_label: typeLabel,
         created_at: bindTime,
@@ -1072,8 +1088,10 @@ export class EndfieldUid extends plugin {
         const pluResPath = this.e?.runtime?.path?.plugin?.['endfield-plugin']?.res || ''
         const baseOpt = { scale: 1.6, retType: 'base64' }
         const renderData = {
-          title: '终末地绑定列表',
-          subtitle: bindingItems.length > 0 ? `共 ${bindingItems.length} 个绑定` : '暂无绑定',
+          title: getMessage('enduid.bind_list_title'),
+          subtitle: bindingItems.length > 0
+            ? getMessage('enduid.bind_list_subtitle', { count: bindingItems.length })
+            : getMessage('enduid.bind_list_subtitle_empty'),
           bindings: bindingItems,
           pluResPath,
           ...getCopyright()
@@ -1089,17 +1107,24 @@ export class EndfieldUid extends plugin {
     }
 
     // 降级为纯文本
-    let msg = '【终末地绑定列表】\n\n'
+    let msg = getMessage('enduid.bind_list_text_title') + '\n\n'
     if (bindingItems.length === 0) {
-      msg += '暂无绑定账号\n'
-      msg += `\n可使用 ${this.getCmdPrefix()}绑定帮助 查看绑定方式`
+      msg += getMessage('enduid.bind_list_empty') + '\n'
+      msg += '\n' + getMessage('enduid.bind_list_help_hint', { prefix: this.getCmdPrefix() })
     } else {
       bindingItems.forEach((item, index) => {
-        const activeMark = item.isPrimary ? ' ⭐当前' : ''
-        msg += `[${item.index}] ${item.nickname}${activeMark}${item.level ? ` Lv.${item.level}` : ''}\n`
-        msg += `    UID：${item.role_id}\n`
-        msg += `    服务器：${item.server_label} | ${item.type_label}\n`
-        msg += `    绑定时间：${item.created_at}\n`
+        const activeMark = item.isPrimary ? getMessage('enduid.bind_list_active_mark') : ''
+        const levelText = item.level ? getMessage('enduid.bind_list_level_text', { level: item.level }) : ''
+        msg += getMessage('enduid.bind_list_item', {
+          index: item.index,
+          nickname: item.nickname,
+          active_mark: activeMark,
+          level_text: levelText,
+          role_id: item.role_id,
+          server_label: item.server_label,
+          type_label: item.type_label,
+          created_at: item.created_at
+        }) + '\n'
         if (index < bindingItems.length - 1) msg += '\n'
       })
     }
@@ -1166,7 +1191,6 @@ export class EndfieldUid extends plugin {
     try {
       const updatedAccounts = accounts.filter(acc => acc.role_id !== deletedAccount.role_id)
       await saveUserBindings(this.e.user_id, updatedAccounts)
-      logger.mark(`[终末地插件][删除绑定]用户 ${this.e.user_id} 删除第 ${index} 个账号 (${deletedAccount.role_id})`)
     } catch (err) {
       logger.error(`[终末地插件][删除绑定]更新本地状态失败: ${err}`)
       await this.reply(getMessage('enduid.delete_failed'))
@@ -1176,7 +1200,7 @@ export class EndfieldUid extends plugin {
     // 远程删除失败时给出提示
     if (!success) {
       logger.warn(`[终末地插件][删除绑定]远程删除失败，仅清理本地记录`)
-      await this.reply('⚠️ 远程服务器删除失败，已清理本地账号记录')
+      await this.reply(getMessage('enduid.delete_remote_failed'))
     }
 
     // 删除后展示最新绑定列表
@@ -1237,7 +1261,6 @@ export class EndfieldUid extends plugin {
       }
       targetAccount = accounts[index - 1]
       if (targetAccount?.binding_id) {
-        logger.mark(`[终末地插件][切换绑定]目标账号 binding_id=${targetAccount.binding_id}`)
       }
     } catch (err) {
       logger.warn(`[终末地插件][切换绑定]远程刷新 binding_id 失败: ${err?.message || err}`)
@@ -1259,7 +1282,6 @@ export class EndfieldUid extends plugin {
         is_primary: acc.role_id === targetAccount.role_id
       }))
       await saveUserBindings(this.e.user_id, updatedAccounts)
-      logger.mark(`[终末地插件][切换绑定]用户 ${this.e.user_id} 切换到第 ${index} 个账号 (${targetAccount.role_id})`)
     } catch (err) {
       logger.error(`[终末地插件][切换绑定]更新本地状态失败: ${err}`)
       await this.reply(getMessage('enduid.switch_failed'))
@@ -1371,21 +1393,6 @@ export class EndfieldUid extends plugin {
       const userIdentifier = String(this.e.user_id)
       const availableRoles = this.normalizeAvailableRoles(loginData.available_roles || [])
 
-      // 兼容后端仅返回 endfield_binding 的场景
-      if (availableRoles.length === 0 && loginData.endfield_binding?.role_id) {
-        const fallbackRoles = this.normalizeAvailableRoles([{
-          role_id: loginData.endfield_binding.role_id,
-          server_id: loginData.endfield_binding.server_id,
-          server_name: loginData.endfield_binding.server_name,
-          nickname: loginData.endfield_binding.nickname,
-          skland_uid: loginData.endfield_binding.skland_uid,
-          channel_name: loginData.endfield_binding.channel_name,
-          level: loginData.endfield_binding.level,
-          is_default: true
-        }])
-        availableRoles.push(...fallbackRoles)
-      }
-
       const defaultRoleId = String(
         availableRoles.find(role => role?.is_default)?.role_id
         || availableRoles[0]?.role_id
@@ -1403,9 +1410,11 @@ export class EndfieldUid extends plugin {
           role
         )
         if (!bindingRes) continue
+        const gameRoleId = bindingRes.game_role_id ?? role.game_role_id ?? role.gameRoleId
         createdBindings.push({
           id: bindingRes.id || bindingRes.binding_id || role.role_id,
           role_id: String(bindingRes.role_id || role.role_id || ''),
+          ...(gameRoleId != null && gameRoleId !== '' ? { game_role_id: String(gameRoleId) } : {}),
           nickname: bindingRes.nickname || role.nickname || '',
           server_id: String(bindingRes.server_id || role.server_id || 1),
           channel_name: bindingRes.channel_name || role.channel_name || '',

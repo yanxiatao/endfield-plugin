@@ -43,6 +43,30 @@ announcement:
 activity:
   query_failed: "查询「{name}」失败，请稍后重试。"
   no_records: "暂无活动记录。"
+  opens_in_days: "{days}日后开启"
+  opens_in_one_month: "1个月后开启"
+  opens_in_months: "{months}个月后开启"
+  remaining_ended: "已结束"
+  remaining_soon: "即将结束"
+  remaining_days: "{days}天后结束"
+  remaining_one_month: "1个月后结束"
+  remaining_months: "{months}个月后结束"
+  remaining_long: "长期有效"
+  opens_label: "{date}开启"
+  start_label: "开始 {time}"
+  end_label: "结束 {time}"
+  time_range_separator: " ～ "
+  text_title: "活动列表"
+  text_subtitle: "共 {count} 个活动"
+  text_title_wrapped: "【活动列表】"
+  text_up_title: "【本期 UP】"
+  text_up_active_prefix: "▶ "
+  text_type_line: "类型：{type}{time}"
+  text_separator: "────────────"
+  text_item_line: "[{index}] {name}"
+  text_item_desc: "    {desc}"
+  text_item_start: "    开始：{time}"
+  text_item_end: "    结束：{time}"
 
 # Wiki 查询提示
 wiki:
@@ -79,6 +103,10 @@ common:
   read_info_failed: "读取配置失败。"
   parse_info_failed: "数据解析异常。"
   delete_failed: "删除记录失败。"
+  unknown: "未知"
+  placeholder: "—"
+  label_line: "【{label}】{text}"
+  user: "用户"
 
 # 功能模块特定提示
 spaceship:
@@ -92,6 +120,36 @@ area:
 
 note:
   loading: "正在获取实时便签..."
+  placeholder: "—"
+  title: "终末地便签"
+  subtitle: "{name} · {server}"
+  text_base: |-
+    角色名：{name}
+    角色ID：{role_id}
+    等级：{level}
+    经验：{exp}
+    世界等级：{world_level}
+    服务器：{server}
+    创建时间：{create_time}
+    最后登录：{last_login}
+    主线任务：{main_mission}
+  text_stats: |-
+    【收集统计】
+    角色数：{char_num}
+    武器数：{weapon_num}
+    文档数：{doc_num}
+    理智：{stamina_current}/{stamina_max}
+    活跃度：{activation}/{max_activation}
+  text_owned_header: "【已拥有干员】({count}个)"
+  text_owned_item: "• {name}"
+
+help:
+  title: "终末地插件帮助"
+  fallback_title: "终末地插件指令帮助（森空岛）"
+  fallback_desc: "说明：{prefixTips}"
+  fallback_group_line: "{group}："
+  fallback_list_item: "- {title}{desc}"
+  fallback_list_desc: "（{desc}）"
 
 stamina:
   subscribed: "已订阅理智提醒。"
@@ -103,23 +161,65 @@ stamina:
   unsubscribe_ok: "已取消理智提醒。"
   not_subscribed: "当前未订阅理智提醒。"
   loading: "正在查询理智状态..."
+  role_not_found: "未找到 roleId 为 {roleId} 的绑定账号，请先用「{prefix}绑定列表」确认角色ID。"
+  text_item: |-
+    理智：{current}/{max}
+    回满时间：{fullTime}
+    日常活跃：{activation}/{maxActivation}
+  text_simple: |-
+    理智：{current}/{max}
+    回满时间：{fullTime}
+    日常活跃：{activation}/{maxActivation}
+  full_time_unknown: "未知"
+  full_time_full: "已满"
+  push_line: "理智已达 {current}/{max}"
+  push_setting_private_ok: "已改为推送到私信（本人）"
+  push_setting_group_ok: "已改为推送到群聊 {groupId}"
 
 attendance:
   sign_failed: "签到失败，请稍后重试。"
   already_signed: "今日已完成签到，无需重复操作。"
+  cache_hit: "今日已签到（缓存）"
+  force_hint: |-
+    ----
+    若需要强制请发送 ：强制签到
+  sign_success: "签到完成！获得:{items}"
+  no_award_info: "无奖励信息"
+  award_line: "  {name} * {count}"
+  sign_exception: "签到异常"
+  redis_unavailable: "Redis 不可用"
+  cache_ttl_uncreated: "未创建"
+  cache_ttl_no_expire: "无过期时间"
+  cache_ttl_unknown: "未知"
+  cache_ttl_format: "{h}小时{m}分{sec}秒"
+  cache_status: |-
+    [ 签到缓存状态 ]
+    ─────────
+    日期 {date}
+    缓存账号 {count}
+    剩余TTL {ttl}
+    缓存键 {key}
+    ─────────
   task_start: "开始执行自动签到..."
   task_start_broadcast: |
     [ 终末地签到任务启动 ]
     待处理账号 {count} 个
-  task_complete: |
+  task_complete: |-
     [ 签到任务报告 ]
-    ──────────────
-    总计账号 {total}
-    今日已签 {signed}
-    本次成功 {success}
+    ─────────
+    总计用户 {total_users}
+    总计游戏账号 {total_accounts}
+    ─────────
+    执行前已签 {before_signed}
+    实际请求 {requested}
+    ─────────
+    本次新签 {success}
     本次失败 {fail}
-  task_complete_fail_users: |
-    失败用户 QQ
+    ─────────
+    执行后已签 {final_signed} / {total_accounts}
+    ─────────
+  task_complete_fail_users: |-
+    失败账号:
     {fail_users}
 
 gacha:
@@ -164,6 +264,43 @@ gacha:
   simulate_daily_limit_reached: "今日模拟抽卡次数已达上限。"
   simulate_reset_all_ok: "已重置全员模拟抽卡状态（共 {count} 条）。"
   simulate_reset_all_no_auth: "此命令仅限管理员使用。"
+  record_fallback_title: "【抽卡记录】"
+  record_fallback_user: "角色：{name}{channel}"
+  record_fallback_stats: "总抽数：{total} | 六星：{star6} | 五星：{star5} | 四星：{star4}"
+  record_section_header: "【{label}】共 {total} 抽"
+  record_item_line: "{index}. ★{rarity} {name}"
+  record_empty: "暂无记录"
+  analysis_fallback_title: "【抽卡分析】"
+  analysis_fallback_user: "角色：{name}{channel}"
+  analysis_fallback_line: "{group} · {pool}：{total} 抽 | {metric1Label} {metric1} | {metric2Label} {metric2}"
+  analysis_fallback_recent_hint: "查看最近记录：{prefix}抽卡记录"
+  global_stats_current_period: "当期UP"
+  global_stats_fallback_title: "【全服抽卡统计】"
+  global_stats_fallback_summary: "总抽数：{total} | 统计用户：{users}"
+  global_stats_fallback_stars: "六星：{star6} | 五星：{star5} | 四星：{star4} | 平均出货：{avgPity} 抽"
+  global_stats_fallback_up: "当前UP：{upName}"
+  global_stats_fallback_official: "官服：{users} 人，{pulls} 抽，均出 {avg}"
+  global_stats_fallback_bili: "B服：{users} 人，{pulls} 抽，均出 {avg}"
+  global_stats_fallback_hint: "发送 :全服抽卡统计 <干员名> 可查看其他期数"
+  global_stats_fallback_cache: "（缓存约 5 分钟）"
+  global_stats_fallback_update: "更新时间：{time}"
+  global_stats_cached_short: "缓存约5分钟"
+  global_stats_just_now: "刚刚"
+  sync_query_pool: "正在查询{pool}..."
+  sync_stage_grant: "验证 Token"
+  sync_stage_bindings: "获取绑定账号"
+  sync_stage_u8token: "获取访问凭证"
+  sync_stage_records: "获取抽卡记录"
+  sync_stage_saving: "保存数据"
+  sync_progress_line: "进度：{progress}%{pools}{records}{elapsed}"
+  sync_progress_pools: " | 卡池 {completed}/{total}"
+  sync_progress_records: " | 已获取 {records} 条"
+  sync_progress_elapsed: " | 已用 {seconds} 秒"
+  sync_progress_stage: "阶段：{stage}"
+  sync_done_pool_limited: "限定池 {count} 条"
+  sync_done_pool_standard: "常驻池 {count} 条"
+  sync_done_pool_beginner: "新手池 {count} 条"
+  sync_done_pool_weapon: "武器池 {count} 条"
 
 enduid:
   bind_help: |
@@ -250,6 +387,36 @@ enduid:
   phone_login_error: "手机登录过程出现异常。"
   get_token_failed: "Token 获取失败。"
   cred_invalid: "Cred 无效或已过期，请重新获取后再试。"
+  login_success_header: "[ 登录成功 ]"
+  login_success_separator: "──────────────"
+  login_success_batch: "本次登录账号 {count} 个"
+  login_success_item: "{index}. {nickname} | UID {role_id} | {server_label}"
+  login_success_total: "已绑定总数 {count}"
+  operator_list_item: "【{nickname}】UID {role_id} | {server_label}"
+  operator_list_title: "终末地干员列表"
+  cred_bind_usage: "请发送「{prefix}绑定 <Cred>」进行登录绑定"
+  qr_scan_prompt: |-
+    请使用森空岛APP扫描二维码进行登陆，二维码有效时间约3分钟。
+    ⚠️ 请不要扫描他人的登录二维码！
+  bind_list_title: "终末地绑定列表"
+  bind_list_subtitle: "共 {count} 个绑定"
+  bind_list_subtitle_empty: "暂无绑定"
+  bind_list_text_title: "【终末地绑定列表】"
+  bind_list_empty: "暂无绑定账号"
+  bind_list_help_hint: "可使用 {prefix}绑定帮助 查看绑定方式"
+  bind_list_item: |-
+    [{index}] {nickname}{active_mark}{level_text}
+        UID：{role_id}
+        服务器：{server_label} | {type_label}
+        绑定时间：{created_at}
+  bind_list_active_mark: " ⭐当前"
+  bind_list_level_text: " Lv.{level}"
+  login_type_qr: "扫码"
+  login_type_phone: "手机号"
+  login_type_auth: "网页授权"
+  login_type_cred: "Cred"
+  server_unknown: "未知服"
+  delete_remote_failed: "⚠️ 远程服务器删除失败，已清理本地账号记录"
 
 strategy:
   provide_name: "请指定攻略名称，示例 :黎风攻略"
@@ -286,6 +453,68 @@ maaend:
   screenshot_failed: "设备可能离线或未连接控制器，无法截图"
   delete_usage: "用法：:maa 删除设备 <序号>"
   no_job_history: "暂无任务历史"
+  status_online: "在线"
+  status_offline: "离线"
+  status_busy: "忙碌"
+  job_status_pending: "等待"
+  job_status_running: "执行中"
+  job_status_completed: "已完成"
+  job_status_failed: "失败"
+  job_status_cancelled: "已停止"
+  duration_seconds: "{seconds} 秒"
+  duration_minutes_seconds: "{minutes} 分 {seconds} 秒"
+  duration_minutes: "{minutes} 分钟"
+  device_list_failed: "获取设备列表失败"
+  device_list_title: "【我的 MaaEnd 设备】"
+  device_list_count: "共 {count} 台设备："
+  device_list_default_mark: " ★默认"
+  device_list_item: "{index}. {name} [{status}]{default_mark}"
+  device_list_meta: "    ID: {id} | 版本: {maaend_version} / {client_version}"
+  device_list_tasks: "    任务: {tasks}"
+  device_list_current_job: "    当前任务: {jobId}"
+  bind_code_title: "【MaaEnd 绑定码】"
+  bind_code_value: "绑定码：{code}"
+  bind_code_expire: "有效期：{duration}"
+  bind_code_help: "请在 MaaEnd Client 中输入上述绑定码完成设备绑定。"
+  bind_code_help2: "绑定成功后会自动通知你。"
+  task_list_failed: "获取设备任务失败"
+  task_list_title: "【{device} 可用任务】"
+  task_list_empty: "暂无可用任务"
+  task_list_label: "（{label}）"
+  task_list_desc: " - {desc}"
+  task_list_item: "  {index}. {name}{label}{desc}"
+  task_list_meta: "控制器：{controllers} | 资源：{resources}"
+  task_list_exec_hint: "执行：:maa 执行 1 2 3（序号）或 :maa 执行 {task}（名称）"
+  request_failed: "请求失败(code: {code})"
+  task_dispatched: |-
+    任务已下发 → {task}
+    任务编号：#1
+    查询进度：:maa 状态
+    停止任务：:maa 停止
+  job_finish_title: "【任务{status}】"
+  job_finish_device: "设备：{device}"
+  job_finish_duration: "耗时：{duration}"
+  job_finish_error: "错误：{error}"
+  query_failed: "查询失败(code: {code})"
+  job_status_title: "【任务状态】"
+  job_status_id: "任务ID：{id}"
+  job_status_device: "设备：{device}"
+  job_status_status: "状态：{status}"
+  job_status_task: "当前子任务：{task}"
+  job_status_progress: "进度：{progress}"
+  job_status_duration: "耗时：{duration}"
+  job_status_error: "错误：{error}"
+  job_status_logs: "最近日志："
+  job_status_log_line: "  [{level}] {message}"
+  stop_failed: "停止任务失败"
+  stop_ok: "已发送停止指令"
+  reset_failed: "重置设备状态失败"
+  reset_ok: "设备任务状态已重置"
+  delete_failed: "删除设备失败"
+  delete_ok: "设备已删除"
+  job_history_failed: "获取任务历史失败"
+  job_history_title: "【任务历史】 第 {page} 页，共 {total} 条"
+  job_history_item: "• {id} | {device} | {status} | {duration}ms"
 
 # 蓝图文档
 bluemap:
@@ -304,10 +533,70 @@ redis_clean:
   redis_unavailable: "Redis 不可用"
   scan_failed: "扫描 Redis 失败：{error}"
   no_keys: "ENDFIELD 命名空间下没有任何 key。"
+  summary: |-
+    【Redis 清理完成】
+
+    扫描：{total} 个 key
+    删除：{deleted} 个无用 key
+    保留：{kept} 个有效 key
+  forward_title: "Redis 清理"
+  deleted_header: "已删除："
+  deleted_line: "  {prefix} × {count}"
+  forward_deleted_title: "删除明细"
+  detail_header: "详细 key："
+  detail_line: "  {key}"
+  detail_more: "  ...及其他 {count} 个"
+  forward_detail_title: "删除列表"
+  kept_header: "保留："
+  kept_line: "  {prefix} × {count}"
+  forward_kept_title: "保留明细"
+  clean_accounts_usage: |-
+    请提供要清理的账号（每行一个 QQ 号）。
+    示例：
+    {prefix}redis清理账号 {example}
+    或
+    {prefix}redis清理账号
+    {example}({example_name})
+  account_report_title: "【Redis 账号清理完成】"
+  account_report_targets: "目标账号：{count}"
+  account_report_deleted: "已删除：{count}"
+  account_report_not_found: "未命中：{count}"
+  account_report_failed: "失败：{count}"
+  account_deleted_header: "已删除 QQ："
+  account_not_found_header: "未命中 QQ："
+  account_failed_header: "失败明细："
+  account_failed_more: "... 及其他 {count} 个"
 
 # 模拟抽卡
 gacha_simulate:
   reset_ok: "已重置模拟抽卡状态（全部卡池），下次将从头开始。"
+  pool_limited: "UP池"
+  pool_standard: "常驻池"
+  pool_weapon: "武器池"
+  pity_prob_text: "当前概率：{pct}%"
+  guaranteed_up_on: "已触发"
+  guaranteed_up_off: "未触发"
+  hard_pity_label: "{count}抽硬保底"
+  summary_total_label: "总抽数"
+  summary_star6_label: "6星数"
+  summary_star5_label: "5星数"
+  summary_not_wai_label: "不歪率"
+  pool_subtitle: "卡池：{pool}"
+  star_6: "★6"
+  star_5: "★5"
+  star_4: "★4"
+  tag_up: "UP"
+  tag_off: "歪"
+  title_single: "模拟单抽"
+  title_ten: "模拟十连"
+  title_hundred: "模拟百连"
+  msg_single_header: "【{title}】{star}{tag}"
+  msg_list_header: "【{title}】"
+  msg_single_detail_pity: "第 {pull} 抽出货（垫了 {pity} 抽）"
+  msg_single_detail: "第 {pull} 抽"
+  msg_line: "第{pull}抽 {star}{tag}"
+  msg_summary: "六星：{star6} | UP：{up} | 总抽数：{total}"
+  separator: "──────────────"
 
 # MaaEnd 设备管理
 maaend_device:

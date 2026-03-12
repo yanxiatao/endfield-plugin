@@ -184,14 +184,12 @@ export class EndfieldRedisClean extends plugin {
     const botId = this.e.self_id || Bot.uin
 
     // 摘要
-    const summary = [
-      '【Redis 清理完成】',
-      '',
-      `扫描：${allKeys.length} 个 key`,
-      `删除：${toDelete.length} 个无用 key`,
-      `保留：${allKeys.length - toDelete.length} 个有效 key`,
-    ]
-    msgs.push({ message: summary.join('\n'), nickname: 'Redis 清理', user_id: botId })
+    const summary = getMessage('redis_clean.summary', {
+      total: allKeys.length,
+      deleted: toDelete.length,
+      kept: allKeys.length - toDelete.length
+    })
+    msgs.push({ message: summary, nickname: getMessage('redis_clean.forward_title'), user_id: botId })
 
     // 已删除明细
     if (toDelete.length > 0) {
@@ -200,25 +198,29 @@ export class EndfieldRedisClean extends plugin {
         const gp = getGroupPrefix(key) || 'ENDFIELD:*'
         grouped[gp] = (grouped[gp] || 0) + 1
       }
-      const delLines = ['已删除：']
+      const delLines = [getMessage('redis_clean.deleted_header')]
       for (const [prefix, count] of Object.entries(grouped)) {
-        delLines.push(`  ${prefix} × ${count}`)
+        delLines.push(getMessage('redis_clean.deleted_line', { prefix, count }))
       }
-      msgs.push({ message: delLines.join('\n'), nickname: '删除明细', user_id: botId })
+      msgs.push({ message: delLines.join('\n'), nickname: getMessage('redis_clean.forward_deleted_title'), user_id: botId })
 
       // 详细 key 列表（超过 50 条截断）
-      const detail = toDelete.slice(0, 50).map(k => `  ${k}`)
-      if (toDelete.length > 50) detail.push(`  ...及其他 ${toDelete.length - 50} 个`)
-      msgs.push({ message: '详细 key：\n' + detail.join('\n'), nickname: '删除列表', user_id: botId })
+      const detail = toDelete.slice(0, 50).map(k => getMessage('redis_clean.detail_line', { key: k }))
+      if (toDelete.length > 50) detail.push(getMessage('redis_clean.detail_more', { count: toDelete.length - 50 }))
+      msgs.push({
+        message: getMessage('redis_clean.detail_header') + '\n' + detail.join('\n'),
+        nickname: getMessage('redis_clean.forward_detail_title'),
+        user_id: botId
+      })
     }
 
     // 保留明细
     if (Object.keys(kept).length > 0) {
-      const keepLines = ['保留：']
+      const keepLines = [getMessage('redis_clean.kept_header')]
       for (const [prefix, count] of Object.entries(kept)) {
-        keepLines.push(`  ${prefix} × ${count}`)
+        keepLines.push(getMessage('redis_clean.kept_line', { prefix, count }))
       }
-      msgs.push({ message: keepLines.join('\n'), nickname: '保留明细', user_id: botId })
+      msgs.push({ message: keepLines.join('\n'), nickname: getMessage('redis_clean.forward_kept_title'), user_id: botId })
     }
 
     // 发送合并转发
@@ -245,9 +247,7 @@ export class EndfieldRedisClean extends plugin {
 
     const targetUserIds = parseTargetUserIds(this.e?.msg || '')
     if (targetUserIds.length === 0) {
-      await this.reply(
-        '请提供要清理的账号（每行一个 QQ 号）。\n示例：\n:redis清理账号 1637608752\n或\n:redis清理账号\n1637608752(苹果金凤梨)'
-      )
+      await this.reply(getMessage('redis_clean.clean_accounts_usage', { prefix: ':', example: '1637608752', example_name: '苹果金凤梨' }))
       return true
     }
 
@@ -270,23 +270,23 @@ export class EndfieldRedisClean extends plugin {
     }
 
     const report = [
-      '【Redis 账号清理完成】',
-      `目标账号：${targetUserIds.length}`,
-      `已删除：${deletedIds.length}`,
-      `未命中：${notFoundIds.length}`,
-      `失败：${failedItems.length}`
+      getMessage('redis_clean.account_report_title'),
+      getMessage('redis_clean.account_report_targets', { count: targetUserIds.length }),
+      getMessage('redis_clean.account_report_deleted', { count: deletedIds.length }),
+      getMessage('redis_clean.account_report_not_found', { count: notFoundIds.length }),
+      getMessage('redis_clean.account_report_failed', { count: failedItems.length })
     ]
 
     if (deletedIds.length > 0) {
-      report.push('', '已删除 QQ：', deletedIds.join('\n'))
+      report.push('', getMessage('redis_clean.account_deleted_header'), deletedIds.join('\n'))
     }
     if (notFoundIds.length > 0) {
-      report.push('', '未命中 QQ：', notFoundIds.join('\n'))
+      report.push('', getMessage('redis_clean.account_not_found_header'), notFoundIds.join('\n'))
     }
     if (failedItems.length > 0) {
       const lines = failedItems.slice(0, 20).map(item => `${item.userId} (${item.err})`)
-      if (failedItems.length > 20) lines.push(`... 及其他 ${failedItems.length - 20} 个`)
-      report.push('', '失败明细：', lines.join('\n'))
+      if (failedItems.length > 20) lines.push(getMessage('redis_clean.account_failed_more', { count: failedItems.length - 20 }))
+      report.push('', getMessage('redis_clean.account_failed_header'), lines.join('\n'))
     }
 
     await this.reply(report.join('\n'))

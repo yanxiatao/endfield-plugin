@@ -14,23 +14,35 @@ const REDIS_KEYS = {
 
 /** 设备状态中文 */
 function statusText(s) {
-  const map = { online: '在线', offline: '离线', busy: '忙碌' }
-  return map[s] || s || '—'
+  const map = {
+    online: getMessage('maaend.status_online'),
+    offline: getMessage('maaend.status_offline'),
+    busy: getMessage('maaend.status_busy')
+  }
+  return map[s] || s || getMessage('common.placeholder')
 }
 
 /** 任务状态中文 */
 function jobStatusText(s) {
-  const map = { pending: '等待', running: '执行中', completed: '已完成', failed: '失败', cancelled: '已停止' }
-  return map[s] || s || '—'
+  const map = {
+    pending: getMessage('maaend.job_status_pending'),
+    running: getMessage('maaend.job_status_running'),
+    completed: getMessage('maaend.job_status_completed'),
+    failed: getMessage('maaend.job_status_failed'),
+    cancelled: getMessage('maaend.job_status_cancelled')
+  }
+  return map[s] || s || getMessage('common.placeholder')
 }
 
 /** 格式化秒数为可读时间 */
 function formatDuration(seconds) {
-  if (!seconds || seconds <= 0) return '—'
-  if (seconds < 60) return `${seconds} 秒`
+  if (!seconds || seconds <= 0) return getMessage('common.placeholder')
+  if (seconds < 60) return getMessage('maaend.duration_seconds', { seconds })
   const min = Math.floor(seconds / 60)
   const sec = seconds % 60
-  return sec > 0 ? `${min} 分 ${sec} 秒` : `${min} 分钟`
+  return sec > 0
+    ? getMessage('maaend.duration_minutes_seconds', { minutes: min, seconds: sec })
+    : getMessage('maaend.duration_minutes', { minutes: min })
 }
 
 export class maaend extends plugin {
@@ -96,7 +108,7 @@ export class maaend extends plugin {
     const req = this.getMaaendReq()
     if (!req) return { err: getMessage('maaend.no_api_key'), devices: [] }
     const res = await req.getDevices()
-    if (!res || res.code !== 0) return { err: res?.message || '获取设备列表失败', devices: [] }
+    if (!res || res.code !== 0) return { err: res?.message || getMessage('maaend.device_list_failed'), devices: [] }
     const allDevices = res.data?.devices || []
     const userIds = await this.getUserDeviceIds(userId)
     const existSet = new Set(allDevices.map(d => d.device_id))
@@ -216,15 +228,29 @@ export class maaend extends plugin {
       return true
     }
     const defaultId = await this.getDefaultDeviceId(userId)
-    const lines = ['【我的 MaaEnd 设备】', `共 ${devices.length} 台设备：`, '']
+    const lines = [
+      getMessage('maaend.device_list_title'),
+      getMessage('maaend.device_list_count', { count: devices.length }),
+      ''
+    ]
     devices.forEach((d, i) => {
       const isDefault = d.device_id === defaultId
       const cap = d.capabilities
-      const tasks = cap?.tasks?.length ? cap.tasks.join('、') : '—'
-      lines.push(`${i + 1}. ${d.device_name || d.device_id} [${statusText(d.status)}]${isDefault ? ' ★默认' : ''}`)
-      lines.push(`    ID: ${d.device_id} | 版本: ${d.maaend_version || '—'} / ${d.client_version || '—'}`)
-      lines.push(`    任务: ${tasks}`)
-      if (d.current_job_id) lines.push(`    当前任务: ${d.current_job_id}`)
+      const tasks = cap?.tasks?.length ? cap.tasks.join('、') : getMessage('common.placeholder')
+      const defaultMark = isDefault ? getMessage('maaend.device_list_default_mark') : ''
+      lines.push(getMessage('maaend.device_list_item', {
+        index: i + 1,
+        name: d.device_name || d.device_id,
+        status: statusText(d.status),
+        default_mark: defaultMark
+      }))
+      lines.push(getMessage('maaend.device_list_meta', {
+        id: d.device_id,
+        maaend_version: d.maaend_version || getMessage('common.placeholder'),
+        client_version: d.client_version || getMessage('common.placeholder')
+      }))
+      lines.push(getMessage('maaend.device_list_tasks', { tasks }))
+      if (d.current_job_id) lines.push(getMessage('maaend.device_list_current_job', { jobId: d.current_job_id }))
       lines.push('')
     })
     await this.reply(lines.join('\n').trim())
@@ -250,12 +276,12 @@ export class maaend extends plugin {
     }
     const { bind_code, expires_in } = res.data || {}
     await this.reply([
-      '【MaaEnd 绑定码】',
-      `绑定码：${bind_code || '—'}`,
-      `有效期：${formatDuration(expires_in || 300)}`,
+      getMessage('maaend.bind_code_title'),
+      getMessage('maaend.bind_code_value', { code: bind_code || getMessage('common.placeholder') }),
+      getMessage('maaend.bind_code_expire', { duration: formatDuration(expires_in || 300) }),
       '',
-      '请在 MaaEnd Client 中输入上述绑定码完成设备绑定。',
-      '绑定成功后会自动通知你。'
+      getMessage('maaend.bind_code_help'),
+      getMessage('maaend.bind_code_help2')
     ].join('\n'))
 
     // 后台轮询：检测新设备并自动认领给当前用户
@@ -305,7 +331,7 @@ export class maaend extends plugin {
 
     const taskRes = await req.getDeviceTasks(out.device.device_id)
     if (!taskRes || taskRes.code !== 0) {
-      await this.reply(taskRes?.message || '获取设备任务失败')
+      await this.reply(taskRes?.message || getMessage('maaend.task_list_failed'))
       return true
     }
 
@@ -363,17 +389,21 @@ export class maaend extends plugin {
     }
 
     // 降级为纯文本
-    const lines = [`【${device.device_name || device.device_id} 可用任务】`]
+    const lines = [getMessage('maaend.task_list_title', { device: device.device_name || device.device_id })]
     if (taskList.length === 0) {
-      lines.push('暂无可用任务')
+      lines.push(getMessage('maaend.task_list_empty'))
     } else {
       taskList.forEach(t => {
-        const desc = t.description ? ` - ${t.description}` : ''
-        lines.push(`  ${t.index}. ${t.name}${t.label ? `（${t.label}）` : ''}${desc}`)
+        const labelText = t.label ? getMessage('maaend.task_list_label', { label: t.label }) : ''
+        const desc = t.description ? getMessage('maaend.task_list_desc', { desc: t.description }) : ''
+        lines.push(getMessage('maaend.task_list_item', { index: t.index, name: t.name, label: labelText, desc }))
       })
     }
-    lines.push(`控制器：${controllers.join('、') || '—'} | 资源：${resources.join('、') || '—'}`)
-    lines.push('', `执行：:maa 执行 1 2 3（序号）或 :maa 执行 ${tasks[0]?.name || 'daily'}（名称）`)
+    lines.push(getMessage('maaend.task_list_meta', {
+      controllers: controllers.join('、') || getMessage('common.placeholder'),
+      resources: resources.join('、') || getMessage('common.placeholder')
+    }))
+    lines.push('', getMessage('maaend.task_list_exec_hint', { task: tasks[0]?.name || 'daily' }))
     await this.reply(lines.join('\n'))
     return true
   }
@@ -417,7 +447,7 @@ export class maaend extends plugin {
       return true
     }
     if (res.code !== 0) {
-      await this.reply(res.message || `请求失败(code: ${res.code})`)
+      await this.reply(res.message || getMessage('maaend.request_failed', { code: res.code }))
       return true
     }
     const jobId = res.data?.job_id
@@ -425,7 +455,7 @@ export class maaend extends plugin {
     if (jobId) await this.saveJobId(this.e.user_id, jobId)
 
     // 下发通知 + 截图合并为一条消息
-    const msg = [`任务已下发 → ${taskDesc}\n任务编号：#1\n查询进度：:maa 状态\n停止任务：:maa 停止`]
+    const msg = [getMessage('maaend.task_dispatched', { task: taskDesc })]
     const ssImg = await this._tryGetScreenshot(req, device.device_id)
     if (ssImg) msg.push(ssImg)
     await this.reply(msg)
@@ -448,7 +478,6 @@ export class maaend extends plugin {
     const poll = async () => {
       attempts++
       if (attempts > maxAttempts) {
-        logger.mark(`[MaaEnd]任务轮询超时，已停止监控: ${jobId}`)
         return
       }
       try {
@@ -468,13 +497,13 @@ export class maaend extends plugin {
         }
 
         // 任务结束，推送通知 + 截图合并为一条消息
-        const duration = job.duration_ms != null ? formatDuration(Math.ceil(job.duration_ms / 1000)) : '—'
+        const duration = job.duration_ms != null ? formatDuration(Math.ceil(job.duration_ms / 1000)) : getMessage('common.placeholder')
         const lines = [
-          `【任务${jobStatusText(job.status)}】`,
-          `设备：${job.device_name || job.device_id || '—'}`,
-          `耗时：${duration}`
+          getMessage('maaend.job_finish_title', { status: jobStatusText(job.status) }),
+          getMessage('maaend.job_finish_device', { device: job.device_name || job.device_id || getMessage('common.placeholder') }),
+          getMessage('maaend.job_finish_duration', { duration })
         ]
-        if (job.error) lines.push(`错误：${job.error}`)
+        if (job.error) lines.push(getMessage('maaend.job_finish_error', { error: job.error }))
         const msg = [lines.join('\n')]
         if (job.status === 'completed') {
           const ssImg = await (async () => {
@@ -514,24 +543,24 @@ export class maaend extends plugin {
       return true
     }
     if (res.code !== 0) {
-      await this.reply(res.message || `查询失败(code: ${res.code})`)
+      await this.reply(res.message || getMessage('maaend.query_failed', { code: res.code }))
       return true
     }
     const j = res.data || {}
-    const progress = j.progress ? `${j.progress.completed}/${j.progress.total}` : '—'
+    const progress = j.progress ? `${j.progress.completed}/${j.progress.total}` : getMessage('common.placeholder')
     const lines = [
-      '【任务状态】',
-      `任务ID：${j.job_id}`,
-      `设备：${j.device_name || j.device_id}`,
-      `状态：${jobStatusText(j.status)}`,
-      `当前子任务：${j.current_task || '—'}`,
-      `进度：${progress}`,
-      `耗时：${j.duration_ms != null ? `${j.duration_ms}ms` : '—'}`,
-      j.error ? `错误：${j.error}` : ''
+      getMessage('maaend.job_status_title'),
+      getMessage('maaend.job_status_id', { id: j.job_id }),
+      getMessage('maaend.job_status_device', { device: j.device_name || j.device_id }),
+      getMessage('maaend.job_status_status', { status: jobStatusText(j.status) }),
+      getMessage('maaend.job_status_task', { task: j.current_task || getMessage('common.placeholder') }),
+      getMessage('maaend.job_status_progress', { progress }),
+      getMessage('maaend.job_status_duration', { duration: j.duration_ms != null ? `${j.duration_ms}ms` : getMessage('common.placeholder') }),
+      j.error ? getMessage('maaend.job_status_error', { error: j.error }) : ''
     ].filter(Boolean)
     if (Array.isArray(j.logs) && j.logs.length) {
-      lines.push('', '最近日志：')
-      j.logs.slice(-5).forEach((l) => lines.push(`  [${l.level}] ${l.message}`))
+      lines.push('', getMessage('maaend.job_status_logs'))
+      j.logs.slice(-5).forEach((l) => lines.push(getMessage('maaend.job_status_log_line', { level: l.level, message: l.message })))
     }
     await this.reply(lines.join('\n'))
     return true
@@ -548,10 +577,10 @@ export class maaend extends plugin {
     const req = this.getMaaendReq()
     const res = await req.stopJob(jobId)
     if (!res || res.code !== 0) {
-      await this.reply(res?.message || '停止任务失败')
+      await this.reply(res?.message || getMessage('maaend.stop_failed'))
       return true
     }
-    await this.reply(res.data?.message || '已发送停止指令')
+    await this.reply(res.data?.message || getMessage('maaend.stop_ok'))
     return true
   }
 
@@ -586,10 +615,10 @@ export class maaend extends plugin {
     const req = this.getMaaendReq()
     const res = await req.resetDevice(out.device.device_id)
     if (!res || res.code !== 0) {
-      await this.reply(res?.message || '重置设备状态失败')
+      await this.reply(res?.message || getMessage('maaend.reset_failed'))
       return true
     }
-    await this.reply(res.data?.message || '设备任务状态已重置')
+    await this.reply(res.data?.message || getMessage('maaend.reset_ok'))
     return true
   }
 
@@ -609,11 +638,11 @@ export class maaend extends plugin {
     const req = this.getMaaendReq()
     const res = await req.deleteDevice(out.device.device_id)
     if (!res || res.code !== 0) {
-      await this.reply(res?.message || '删除设备失败')
+      await this.reply(res?.message || getMessage('maaend.delete_failed'))
       return true
     }
     await this.removeUserDevice(this.e.user_id, out.device.device_id)
-    await this.reply(res.data?.message || '设备已删除')
+    await this.reply(res.data?.message || getMessage('maaend.delete_ok'))
     return true
   }
 
@@ -632,7 +661,7 @@ export class maaend extends plugin {
 
     const taskRes = await req.getDeviceTasks(out.device.device_id)
     if (!taskRes || taskRes.code !== 0) {
-      await this.reply(taskRes?.message || '获取设备任务失败')
+      await this.reply(taskRes?.message || getMessage('maaend.task_list_failed'))
       return true
     }
 
@@ -657,7 +686,7 @@ export class maaend extends plugin {
     if (!req) return true
     const res = await req.getJobs({ page, limit: 10, device_id: deviceIdFilter || undefined })
     if (!res || res.code !== 0) {
-      await this.reply(res?.message || '获取任务历史失败')
+      await this.reply(res?.message || getMessage('maaend.job_history_failed'))
       return true
     }
     const jobs = res.data?.jobs || []
@@ -666,9 +695,14 @@ export class maaend extends plugin {
       await this.reply(getMessage('maaend.no_job_history'))
       return true
     }
-    const lines = [`【任务历史】 第 ${page} 页，共 ${total} 条`, '']
+    const lines = [getMessage('maaend.job_history_title', { page, total }), '']
     jobs.forEach((j) => {
-      lines.push(`• ${j.job_id} | ${j.device_name || j.device_id} | ${jobStatusText(j.status)} | ${j.duration_ms ?? '—'}ms`)
+      lines.push(getMessage('maaend.job_history_item', {
+        id: j.job_id,
+        device: j.device_name || j.device_id,
+        status: jobStatusText(j.status),
+        duration: j.duration_ms ?? getMessage('common.placeholder')
+      }))
     })
     await this.reply(lines.join('\n'))
     return true
