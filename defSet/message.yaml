@@ -74,6 +74,7 @@ wiki:
   query_failed: "查询「{name}」失败。"
   not_found: "未找到与「{name}」相关的 {type_label} 条目。"
   detail_failed: "未获取到「{name}」的百科详情。"
+  render_failed: "百科图片渲染失败。"
 
 # 干员相关提示
 operator:

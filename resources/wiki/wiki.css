@@ -1,0 +1,231 @@
+@font-face {
+  font-family: 'HarmonyOS Sans SC';
+  src: url('../font/HarmonyOS_SansSC_Bold.ttf') format('truetype');
+  font-weight: bold;
+  font-style: normal;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  overflow-x: hidden;
+}
+
+body {
+  background: #f5f5f5;
+  font-family: 'HarmonyOS Sans SC', -apple-system, BlinkMacSystemFont, 'Microsoft YaHei', sans-serif;
+  color: #1f2937;
+}
+
+.wiki-container {
+  width: 100%;
+  min-width: 100%;
+  padding: 14px 16px 18px;
+}
+
+.list-top-bar {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 12px 16px;
+  background: #f9fafb;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  position: relative;
+}
+
+.list-header-middle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.list-title {
+  font-size: 1.45rem;
+  color: #1f2937;
+}
+
+.list-subtitle {
+  margin-top: 2px;
+  font-size: 0.86rem;
+  color: #6b7280;
+}
+
+.list-top-bar-logo {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.logo-image {
+  height: 40px;
+  width: auto;
+  max-width: 110px;
+  object-fit: contain;
+}
+
+.wiki-head-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  background: #ffffff;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+}
+
+.wiki-head-main {
+  min-width: 0;
+}
+
+.wiki-type-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 64px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  color: #007180;
+  border: 1px solid #88d2d9;
+  background: #eef9fa;
+}
+
+.wiki-name {
+  margin-top: 8px;
+  font-size: 1.4rem;
+  line-height: 1.25;
+  color: #111827;
+  word-break: break-word;
+}
+
+.wiki-caption {
+  margin-top: 8px;
+  font-size: 0.88rem;
+  color: #4b5563;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.wiki-cover-wrap {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  overflow: hidden;
+  background: #f3f4f6;
+}
+
+.wiki-cover {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.wiki-section-card {
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  background: #ffffff;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+}
+
+.wiki-section-title {
+  display: inline-block;
+  margin-bottom: 10px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #f3f4f6;
+  color: #111827;
+  font-size: 0.94rem;
+}
+
+.wiki-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.wiki-section-content {
+  font-size: 0.9rem;
+  line-height: 1.75;
+  color: #374151;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #fafafa;
+  border: 1px solid #eef0f3;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.wiki-table-wrap {
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.wiki-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.wiki-table th,
+.wiki-table td {
+  border-bottom: 1px solid #eef1f4;
+  border-right: 1px solid #eef1f4;
+  padding: 8px 9px;
+  text-align: left;
+  vertical-align: top;
+  font-size: 0.84rem;
+  line-height: 1.55;
+  color: #1f2937;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.wiki-table th:last-child,
+.wiki-table td:last-child {
+  border-right: 0;
+}
+
+.wiki-table thead th {
+  background: #f3f6f8;
+  color: #111827;
+  font-weight: bold;
+}
+
+.wiki-table tbody tr:nth-child(2n) td {
+  background: #fcfcfd;
+}
+
+.wiki-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.footer {
+  margin-top: 14px;
+  padding-top: 12px;
+  text-align: center;
+  border-top: 1px solid #e5e7eb;
+}
+
+.copyright {
+  font-size: 0.96rem;
+  color: #000000;
+}
+
+.copyright .version {
+  color: #007180;
+}

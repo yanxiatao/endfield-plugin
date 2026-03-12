@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width={{pageWidth}}, initial-scale=1">
+  <title>{{itemName}} - {{title}}</title>
+  <link rel="stylesheet" href="{{_res_path}}wiki/wiki.css">
+  <style>
+    html, body { width: {{pageWidth}}px; min-width: {{pageWidth}}px; box-sizing: border-box; }
+  </style>
+</head>
+<body>
+  <div class="wiki-container">
+    <header class="list-top-bar">
+      <div class="list-header-middle">
+        <h1 class="list-title">{{title}}</h1>
+        <p class="list-subtitle">{{typeLabel}} · {{itemName}}</p>
+      </div>
+      {{if pluResPath}}
+      <div class="logo-container list-top-bar-logo">
+        <img src="{{pluResPath}}img/ET logo.svg" alt="Logo" class="logo-image">
+      </div>
+      {{/if}}
+    </header>
+
+    <section class="wiki-head-card">
+      <div class="wiki-head-main">
+        <div class="wiki-type-tag">{{typeLabel}}</div>
+        <h2 class="wiki-name">{{itemName}}</h2>
+        {{if caption}}
+        <p class="wiki-caption">{{caption}}</p>
+        {{/if}}
+      </div>
+      {{if coverUrl}}
+      <div class="wiki-cover-wrap">
+        <img src="{{coverUrl}}" alt="" class="wiki-cover" onerror="this.style.display='none';this.parentElement.style.display='none'">
+      </div>
+      {{/if}}
+    </section>
+
+    <section class="wiki-section-card">
+      <h3 class="wiki-section-title">【占位说明】</h3>
+      <div class="wiki-section-content">该子分类当前使用占位模板，后续再补充专用排版与结构化渲染。</div>
+    </section>
+
+    {{if sections && sections.length > 0}}
+    {{each sections section idx}}
+    <section class="wiki-section-card">
+      <h3 class="wiki-section-title">{{section.chapterTitle}}</h3>
+      <div class="wiki-section-content">{{section.content}}</div>
+    </section>
+    {{/each}}
+    {{/if}}
+
+    <footer class="footer">
+      <div class="copyright">{{@copyright || sys?.copyright}}</div>
+    </footer>
+  </div>
+</body>
+</html>

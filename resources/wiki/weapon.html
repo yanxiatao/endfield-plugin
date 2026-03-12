@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width={{pageWidth}}, initial-scale=1">
+  <title>{{if pageTitle}}{{pageTitle}}{{else}}{{title}}{{/if}}</title>
+  <link rel="stylesheet" href="{{_res_path}}wiki/wiki.css">
+  <style>
+    html, body { width: {{pageWidth}}px; min-width: {{pageWidth}}px; box-sizing: border-box; }
+  </style>
+</head>
+<body>
+  <div class="wiki-container">
+    <header class="list-top-bar">
+      <div class="list-header-middle">
+        <h1 class="list-title">{{title}}</h1>
+        {{if subtitle}}
+        <p class="list-subtitle">{{subtitle}}</p>
+        {{/if}}
+      </div>
+      {{if pluResPath}}
+      <div class="logo-container list-top-bar-logo">
+        <img src="{{pluResPath}}img/ET logo.svg" alt="Logo" class="logo-image">
+      </div>
+      {{/if}}
+    </header>
+
+    <section class="wiki-head-card">
+      <div class="wiki-head-main">
+        {{if showTypeLabel && typeLabel}}
+        <div class="wiki-type-tag">{{typeLabel}}</div>
+        {{/if}}
+        {{if showItemName && itemName}}
+        <h2 class="wiki-name">{{itemName}}</h2>
+        {{/if}}
+        {{if caption}}
+        <p class="wiki-caption">{{caption}}</p>
+        {{/if}}
+      </div>
+      {{if coverUrl}}
+      <div class="wiki-cover-wrap">
+        <img src="{{coverUrl}}" alt="" class="wiki-cover" onerror="this.style.display='none';this.parentElement.style.display='none'">
+      </div>
+      {{/if}}
+    </section>
+
+    {{if sections && sections.length > 0}}
+    {{each sections section idx}}
+    <section class="wiki-section-card">
+      <h3 class="wiki-section-title">{{section.chapterTitle}}</h3>
+      <div class="wiki-section-body">
+        {{if section.blocks && section.blocks.length > 0}}
+        {{each section.blocks blk bIdx}}
+        {{if blk.type === 'table'}}
+        <div class="wiki-table-wrap">
+          <table class="wiki-table">
+            {{if blk.headers && blk.headers.length > 0}}
+            <thead>
+              <tr>
+                {{each blk.headers head hIdx}}
+                <th>{{head}}</th>
+                {{/each}}
+              </tr>
+            </thead>
+            {{/if}}
+            <tbody>
+              {{each blk.rows row rIdx}}
+              <tr>
+                {{each row cell cIdx}}
+                <td>{{cell}}</td>
+                {{/each}}
+              </tr>
+              {{/each}}
+            </tbody>
+          </table>
+        </div>
+        {{else}}
+        <div class="wiki-section-content">{{blk.text}}</div>
+        {{/if}}
+        {{/each}}
+        {{else}}
+        <div class="wiki-section-content">{{section.content}}</div>
+        {{/if}}
+      </div>
+    </section>
+    {{/each}}
+    {{else}}
+    <section class="wiki-section-card">
+      <h3 class="wiki-section-title">【正文】</h3>
+      <div class="wiki-section-content">暂无正文</div>
+    </section>
+    {{/if}}
+
+    <footer class="footer">
+      <div class="copyright">{{@copyright || sys?.copyright}}</div>
+    </footer>
+  </div>
+</body>
+</html>

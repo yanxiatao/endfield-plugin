@@ -1,17 +1,59 @@
 // 官方 wiki 数据不全，后续可再补
 
 import { getMessage } from '../utils/common.js'
-import common from '../../../lib/common/common.js'
 import EndfieldRequest from '../model/endfieldReq.js'
 import setting from '../utils/setting.js'
+import { getCopyright } from '../utils/copyright.js'
+import { getWikiSubtypeRenderer } from './wiki/registry.js'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-/** Wiki 游戏百科：main_type_id=1，sub_type_id 与展示名/输入前缀映射 */
+/** Wiki 游戏百科：main_type_id=1，子分类按原始 SUB_LABEL（1~9） */
 const WIKI = {
   MAIN_TYPE_GAME: '1',
-  SUB_LABEL: { '1': '干员', '2': '武器', '3': '威胁', '4': '装备', '5': '设备', '6': '物品', '7': '武器基质', '8': '任务', '9': '活动' }
+  SUB_LABEL: {
+    '1': '干员',
+    '2': '武器',
+    '3': '威胁',
+    '4': '装备',
+    '5': '设备',
+    '6': '物品',
+    '7': '武器基质',
+    '8': '任务',
+    '9': '活动'
+  },
+  DEFAULT_SUB_TYPE_ID: '1'
 }
-WIKI.SUB_TYPE_BY_LABEL = Object.fromEntries(Object.entries(WIKI.SUB_LABEL).map(([k, v]) => [v, k]))
+WIKI.SUB_LABEL_BY_ID = { ...WIKI.SUB_LABEL }
+WIKI.TEMPLATE_BY_SUB_TYPE = {
+  '1': 'wiki/operator',
+  '2': 'wiki/weapon',
+  '4': 'wiki/equipment',
+  '5': 'wiki/tactical-item',
+  '3': 'wiki/placeholder',
+  '6': 'wiki/placeholder',
+  '7': 'wiki/placeholder',
+  '8': 'wiki/placeholder',
+  '9': 'wiki/placeholder'
+}
+WIKI.SUB_TYPE_BY_LABEL = {
+  干员: '1',
+  角色: '1',
+  武器: '2',
+  威胁: '3',
+  装备: '4',
+  设备: '5',
+  战术物品: '5',
+  战术道具: '5',
+  物品: '5',
+  武器基质: '7',
+  任务: '8',
+  活动: '9'
+}
 WIKI.LABELS_SORTED = Object.entries(WIKI.SUB_TYPE_BY_LABEL).sort((a, b) => b[0].length - a[0].length)
+
+const WIKI_RES_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../resources/wiki')
 
 export class EndfieldWiki extends plugin {
   constructor() {
@@ -27,8 +69,13 @@ export class EndfieldWiki extends plugin {
         }
       ]
     })
+    this._wikiTemplateCache = new Map()
   }
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> 7d10a50 (commit)
   /**
    * 解析 :wiki [干员|武器|...] xxx，返回 { subTypeId, name }。
    * 无前缀时默认 subTypeId='1'（干员）；按标签长度降序匹配，避免短标签抢匹配。
@@ -36,14 +83,44 @@ export class EndfieldWiki extends plugin {
   getWikiQuery() {
     const msg = (this.e.msg || '').trim()
     const afterPrefix = msg.replace(/^(?:[:：]|[/#](?:zmd|终末地))\s*/i, '').replace(/^wiki\s*/i, '').trim()
-    if (!afterPrefix) return { subTypeId: '1', name: '' }
+    if (!afterPrefix) return { subTypeId: WIKI.DEFAULT_SUB_TYPE_ID, name: '' }
     for (const [label, subTypeId] of WIKI.LABELS_SORTED) {
       if (afterPrefix === label || afterPrefix.startsWith(label + ' ') || afterPrefix.startsWith(label)) {
         const name = afterPrefix === label ? '' : afterPrefix.slice(label.length).trim()
         return { subTypeId, name }
       }
     }
-    return { subTypeId: '1', name: afterPrefix }
+    return { subTypeId: WIKI.DEFAULT_SUB_TYPE_ID, name: afterPrefix }
+  }
+
+  getWikiTemplateBySubTypeId(subTypeId) {
+    const id = String(subTypeId || '')
+    return WIKI.TEMPLATE_BY_SUB_TYPE[id] || WIKI.TEMPLATE_BY_SUB_TYPE[WIKI.DEFAULT_SUB_TYPE_ID]
+  }
+
+  getRenderableWikiTemplate(subTypeId) {
+    const id = String(subTypeId || '')
+    const cached = this._wikiTemplateCache.get(id)
+    if (cached) return cached
+
+    const preferred = this.getWikiTemplateBySubTypeId(id)
+    const preferredName = String(preferred || '').split('/').pop() || 'wiki'
+    const preferredFile = path.join(WIKI_RES_DIR, `${preferredName}.html`)
+    if (fs.existsSync(preferredFile)) {
+      this._wikiTemplateCache.set(id, preferred)
+      return preferred
+    }
+
+    const placeholderFile = path.join(WIKI_RES_DIR, 'placeholder.html')
+    if (fs.existsSync(placeholderFile)) {
+      logger.warn(`[终末地Wiki] 模板缺失: ${preferredFile}，回退到 wiki/placeholder`)
+      this._wikiTemplateCache.set(id, 'wiki/placeholder')
+      return 'wiki/placeholder'
+    }
+
+    logger.warn(`[终末地Wiki] 模板缺失: ${preferredFile}，回退到 wiki/wiki`)
+    this._wikiTemplateCache.set(id, 'wiki/wiki')
+    return 'wiki/wiki'
   }
 
   /** 在条目列表中按名称精确匹配，再模糊匹配（包含关系），无结果时返回首项 */
@@ -62,7 +139,7 @@ export class EndfieldWiki extends plugin {
   /** 统一 Wiki 查询：:wiki [干员|武器] xxx / :wiki xxx（默认干员），GET /api/wiki/items?main_type_id=1&sub_type_id={sub_type_id} 后取详情 */
   async queryWiki() {
     const { subTypeId, name } = this.getWikiQuery()
-    const typeLabel = WIKI.SUB_LABEL[subTypeId] || '百科'
+    const typeLabel = WIKI.SUB_LABEL_BY_ID[subTypeId] || WIKI.SUB_LABEL_BY_ID[WIKI.DEFAULT_SUB_TYPE_ID]
     if (!name) {
       await this.reply(getMessage('wiki.provide_content'))
       return true
@@ -103,38 +180,28 @@ export class EndfieldWiki extends plugin {
 
     const data = detailRes.data
     const dataSubTypeId = String(data.sub_type_id ?? data.subTypeId ?? '')
-    const dataTypeLabel = WIKI.SUB_LABEL[dataSubTypeId] || typeLabel
-    const cover = data.cover
-    const seg = global.segment || (await import('oicq')).segment
-
-    // 按【干员资料】【能力扩延】【干员潜能】等章节分段，合并转发每条一段
-    const { header, sections } = this.getWikiSections(data, dataTypeLabel)
-    const forwardParts = []
-    if (sections.length === 0) {
-      forwardParts.push([header || '暂无正文'])
-      if (cover && seg?.image) {
-        try {
-          forwardParts[0].push(seg.image(cover))
-        } catch (e) {}
-      }
-    } else {
-      const firstBlock = header + '\n────────────\n' + sections[0].chapterTitle + '\n' + sections[0].content
-      if (cover && seg?.image) {
-        try {
-          forwardParts.push([firstBlock, seg.image(cover)])
-        } catch (e) {
-          forwardParts.push([firstBlock])
-        }
-      } else {
-        forwardParts.push([firstBlock])
-      }
-      for (let i = 1; i < sections.length; i++) {
-        const block = '────────────\n' + sections[i].chapterTitle + '\n' + sections[i].content
-        forwardParts.push([block])
-      }
+    const finalSubTypeId = dataSubTypeId || subTypeId
+    const dataTypeLabel = WIKI.SUB_LABEL_BY_ID[finalSubTypeId] || typeLabel
+    if (!this.e?.runtime?.render) {
+      await this.reply(getMessage('wiki.render_failed'))
+      return true
     }
-    const forwardMsg = common.makeForwardMsg(this.e, forwardParts, `终末地Wiki-${dataTypeLabel}`)
-    await this.e.reply(forwardMsg)
+
+    const renderSubtype = getWikiSubtypeRenderer(finalSubTypeId)
+    try {
+      const rendered = await renderSubtype(this, {
+        data,
+        typeLabel: dataTypeLabel,
+        subTypeId: finalSubTypeId
+      })
+      if (rendered) {
+        return true
+      }
+      logger.error('[终末地Wiki] 图片渲染失败: 渲染器返回空结果')
+    } catch (err) {
+      logger.error(`[终末地Wiki] 图片渲染失败: ${err?.message || err}`)
+    }
+    await this.reply(getMessage('wiki.render_failed'))
     return true
   }
 
@@ -177,21 +244,6 @@ export class EndfieldWiki extends plugin {
     const dataMarkers = ['详细属性', 'RANK ', '技能专精', '材料消耗', '激活条件', '基础数据', '需求素材', '能力值', '详细数值']
     const matchCount = dataMarkers.filter((m) => text.includes(m)).length
     return matchCount >= 2
-  }
-
-  /** 格式化 Wiki 条目详情：标题 + caption + 正文（document_map 渲染） */
-  formatItemDetail(data, typeLabel) {
-    let out = `【${typeLabel}】${data.name || '未知'}\n`
-    if (Array.isArray(data.caption) && data.caption.length > 0) {
-      const cap = this.renderCaption(data.caption)
-      if (cap) out += cap + '\n'
-    }
-    if (data.content?.document_map || data.content?.documentMap) {
-      const body = this.renderWikiContent(data.content)
-      if (body) out += body
-    }
-    if (!out.trim()) out += '暂无正文内容\n'
-    return out.trim()
   }
 
   renderCaption(caption) {
@@ -293,6 +345,7 @@ export class EndfieldWiki extends plugin {
     return this.getDocIdsFromChapter(chapter, widgetMap)
   }
 
+<<<<<<< HEAD
   /** 将 content 按章节渲染为纯文本；干员资料无文档时用基础档案并只保留代号/性别/身份认证/生日/种族；排除特别提醒/干员档案 */
   renderWikiContent(content) {
     const docMap = content?.document_map || content?.documentMap || {}
@@ -343,6 +396,7 @@ export class EndfieldWiki extends plugin {
     return lines.join('\n').replace(/\n{3,}/g, '\n\n')
   }
 
+<<<<<<< HEAD
   /**
    * 按章节返回内容，用于合并转发按【干员资料】等标题分段。
    * 返回 { header, sections }，header=【干员】name+caption，sections=[{ chapterTitle, content }]。
@@ -396,7 +450,176 @@ export class EndfieldWiki extends plugin {
     return { header, sections }
   }
 
+<<<<<<< HEAD
+<<<<<<< HEAD
   renderBlock(block, blockMap, opts = {}) {
+=======
+=======
+>>>>>>> 7d10a50 (commit)
+=======
+>>>>>>> 8c78072 (commit)
+=======
+>>>>>>> 12060e2 (commit)
+  normalizeWikiSectionContent(text) {
+    return String(text || '')
+      .replace(/(?:^|\n)─{6,}(?=\n|$)/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  }
+
+  parseWikiTableRow(line) {
+    if (!line || typeof line !== 'string') return []
+    const cells = line.split('|').map((s) => s.trim())
+    if (cells.length > 0 && cells[0] === '') cells.shift()
+    if (cells.length > 0 && cells[cells.length - 1] === '') cells.pop()
+    return cells
+  }
+
+  isWikiTableSeparatorRow(cells = []) {
+    if (!Array.isArray(cells) || cells.length === 0) return false
+    const validCells = cells.map((c) => String(c || '').trim()).filter((c) => c !== '')
+    if (validCells.length === 0) return false
+    return validCells.every((c) => /^:?-{2,}:?$/.test(c))
+  }
+
+  isLikelyWikiTableLine(line) {
+    if (!line || typeof line !== 'string' || !line.includes('|')) return false
+    const cells = this.parseWikiTableRow(line)
+    if (cells.length < 2) return false
+    if (this.isWikiTableSeparatorRow(cells)) return false
+    return true
+  }
+
+  buildWikiSectionBlocks(content = '') {
+    const lines = String(content || '').split('\n')
+    const blocks = []
+    let textBuffer = []
+    let tableBuffer = []
+
+    const flushText = () => {
+      if (textBuffer.length === 0) return
+      const text = textBuffer.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+      if (text) blocks.push({ type: 'text', text })
+      textBuffer = []
+    }
+
+    const flushTable = () => {
+      if (tableBuffer.length === 0) return
+      const validRows = tableBuffer.filter((row) => Array.isArray(row) && row.length >= 2 && !this.isWikiTableSeparatorRow(row))
+      if (validRows.length >= 2) {
+        const colCount = validRows.reduce((max, row) => Math.max(max, row.length), 2)
+        const normRows = validRows.map((row) => {
+          const out = row.slice(0, colCount)
+          while (out.length < colCount) out.push('')
+          return out
+        })
+        blocks.push({
+          type: 'table',
+          headers: normRows[0],
+          rows: normRows.slice(1)
+        })
+      } else {
+        for (const row of validRows) textBuffer.push(row.join(' | '))
+      }
+      tableBuffer = []
+    }
+
+    for (const rawLine of lines) {
+      const line = String(rawLine || '').trimEnd()
+      if (this.isLikelyWikiTableLine(line)) {
+        flushText()
+        tableBuffer.push(this.parseWikiTableRow(line))
+        continue
+      }
+      flushTable()
+      if (!line.trim()) {
+        if (textBuffer.length > 0 && textBuffer[textBuffer.length - 1] !== '') textBuffer.push('')
+      } else {
+        textBuffer.push(line)
+      }
+    }
+
+    flushTable()
+    flushText()
+    if (blocks.length === 0) blocks.push({ type: 'text', text: '暂无内容' })
+    return blocks
+  }
+
+  buildWikiRenderSections(sections = []) {
+    if (!Array.isArray(sections)) return []
+    return sections.map((section) => {
+      const chapterTitle = String(section?.chapterTitle || '').trim() || '【章节】'
+      const content = this.normalizeWikiSectionContent(section?.content || '') || '暂无内容'
+      const blocks = this.buildWikiSectionBlocks(content)
+      return {
+        chapterTitle,
+        content,
+        blocks
+      }
+    })
+  }
+
+  estimateWikiViewportHeight(sections = [], hasCover = false) {
+    const baseHeight = hasCover ? 1320 : 960
+    const textHeight = sections.reduce((sum, section) => {
+      const textLength = String(section?.content || '').length
+      return sum + Math.min(1600, 140 + Math.ceil(textLength / 36) * 20)
+    }, 0)
+    return Math.max(1400, Math.min(8200, baseHeight + textHeight))
+  }
+
+  async renderWikiImage(data, typeLabel, sections, subTypeId, options = {}) {
+    if (!this.e?.runtime?.render) return null
+    const pageWidth = 760
+    const renderSections = this.buildWikiRenderSections(sections)
+    const hideCaption = options.hideCaption === true
+    const hideCover = options.hideCover === true
+    const showItemName = options.showItemName !== false
+    const showTypeLabel = options.showTypeLabel !== false
+    const itemName = showItemName ? (data?.name || '未知') : ''
+    const typeText = showTypeLabel ? String(typeLabel || '') : ''
+    const subtitle = typeof options.subtitle === 'string'
+      ? options.subtitle
+      : [typeText, itemName].filter(Boolean).join(' · ')
+    const pageTitle = itemName ? `${itemName} - 终末地 Wiki` : '终末地 Wiki'
+    const caption = hideCaption ? '' : this.renderCaption(Array.isArray(data?.caption) ? data.caption : [])
+    const coverUrl = hideCover ? '' : String(data?.cover || '').trim()
+    const viewportHeight = this.estimateWikiViewportHeight(renderSections, !!coverUrl)
+    const template = this.getRenderableWikiTemplate(subTypeId)
+    const { copyright, sys } = getCopyright()
+    const renderData = {
+      title: '终末地 Wiki',
+      pageTitle,
+      typeLabel: typeText,
+      subtitle,
+      showTypeLabel,
+      itemName,
+      showItemName,
+      caption,
+      coverUrl,
+      sections: renderSections,
+      sectionCount: renderSections.length,
+      copyright,
+      sys,
+      pageWidth,
+      pluResPath: this.e?.runtime?.path?.plugin?.['endfield-plugin']?.res || ''
+    }
+    return await this.e.runtime.render('endfield-plugin', template, renderData, {
+      scale: 1.6,
+      retType: 'base64',
+      viewport: { width: pageWidth, height: viewportHeight }
+    })
+  }
+
+<<<<<<< HEAD
+  renderBlock(block, blockMap) {
+<<<<<<< HEAD
+>>>>>>> 2adb872 (commit)
+=======
+>>>>>>> 7d10a50 (commit)
+=======
+  renderBlock(block, blockMap, opts = {}) {
+>>>>>>> c72856b (commit)
     if (!block) return ''
     switch (block.kind) {
       case 'text': {
@@ -457,14 +680,16 @@ export class EndfieldWiki extends plugin {
         if (rowIds.length > 0 && columnIds.length > 0) {
           for (const rowId of rowIds) {
             const rowCells = []
+            let hasText = false
             for (const colId of columnIds) {
               const key = `${rowId}_${colId}`
               const cell = cellMap[key]
               const text = cell ? renderCell(cell) : ''
-              if (text) rowCells.push(text)
+              rowCells.push(text)
+              if (text) hasText = true
               allCells.push(text)
             }
-            if (rowCells.length > 0) rows.push(rowCells.join(' | '))
+            if (hasText) rows.push(rowCells.join(' | '))
           }
         } else {
           for (const cid of Object.keys(cellMap)) {
@@ -487,7 +712,7 @@ export class EndfieldWiki extends plugin {
           const childIds = item?.child_ids || item?.childIds || []
           for (const cid of childIds) {
             const c = blockMap[cid]
-            if (c) items.push(this.renderBlock(c, blockMap))
+            if (c) items.push(this.renderBlock(c, blockMap, opts))
           }
         }
         return items.filter(Boolean).map((s) => '· ' + s).join('\n')
@@ -497,12 +722,6 @@ export class EndfieldWiki extends plugin {
       default:
         return ''
     }
-  }
-
-  isOperatorContent(content) {
-    const chapterGroup = content?.chapter_group || content?.chapterGroup || []
-    if (!Array.isArray(chapterGroup)) return false
-    return chapterGroup.some((ch) => ['能力扩延', '干员潜能'].includes(ch?.title || ''))
   }
 
   getTabEntries(widgetData) {
@@ -557,6 +776,230 @@ export class EndfieldWiki extends plugin {
     return `战斗技能${index + 1}`
   }
 
+  normalizeEliteToken(text = '') {
+    return String(text || '')
+      .replace(/\s+/g, '')
+      .replace(/[：:]/g, '')
+      .replace(/[()（）【】\[\]]/g, '')
+      .trim()
+  }
+
+  extractEliteLevel(...inputs) {
+    const candidates = []
+    for (const input of inputs) {
+      if (Array.isArray(input)) {
+        candidates.push(...input)
+      } else {
+        candidates.push(input)
+      }
+    }
+
+    for (const item of candidates) {
+      const text = String(item || '').trim()
+      if (!text) continue
+      const levelMatch = text.match(/(?:Lv\.?\s*)?(\d{1,3})\s*级/i)
+      if (levelMatch) return `${parseInt(levelMatch[1], 10)}级`
+      const rankMatch = text.match(/\bRANK\s*([0-9]{1,2})\b/i)
+      if (rankMatch) return `RANK ${rankMatch[1]}`
+    }
+    return ''
+  }
+
+  isEliteGroupToken(token = '') {
+    const t = String(token || '')
+    return ['基础数据', '基础属性', '能力值', '需求素材', '需求材料', '材料消耗', '素材消耗', '需求'].some((g) => t === g || t.startsWith(g))
+  }
+
+  resolveEliteLabel(text, group = '') {
+    const t = this.normalizeEliteToken(text)
+    const g = this.normalizeEliteToken(group)
+    if (!t) return ''
+
+    if (t.includes('基础生命值') || t.includes('基础生命')) return '基础生命值'
+    if (t.includes('基础攻击力') || t.includes('基础攻击')) return '基础攻击力'
+    if (t === '生命值' || t.includes('生命上限')) return '基础生命值'
+    if (t === '攻击力') return '基础攻击力'
+    if ((g.includes('基础数据') || g.includes('基础属性')) && (t === '生命值' || t.includes('生命'))) return '基础生命值'
+    if ((g.includes('基础数据') || g.includes('基础属性')) && (t === '攻击力' || t.includes('攻击'))) return '基础攻击力'
+    for (const attr of ['力量', '敏捷', '智识', '意志']) {
+      if (t === attr || t === `${attr}值` || t.startsWith(attr)) return attr
+    }
+    if (t.includes('需求素材') || t.includes('素材需求') || t.includes('需求材料') || t.includes('材料消耗') || t.includes('素材消耗') || t.includes('消耗材料')) return '需求素材'
+    if ((g.includes('需求') || g.includes('素材')) && t.includes('素材')) return '需求素材'
+    return ''
+  }
+
+  applyEliteValue(values, group, key, val) {
+    const label = this.resolveEliteLabel(key, group)
+    const value = String(val || '').replace(/^[：:\s-]+/, '').trim()
+    if (!label || !value) return
+
+    if (label === '需求素材') {
+      if (!values[label]) {
+        values[label] = value
+      } else if (!values[label].includes(value)) {
+        values[label] = `${values[label]}、${value}`
+      }
+      return
+    }
+    values[label] = value
+  }
+
+  extractEliteInlineValue(cell, label) {
+    const text = String(cell || '').trim()
+    if (!text) return ''
+    const aliasMap = {
+      基础生命值: ['基础生命值', '基础生命', '生命值', '生命上限'],
+      基础攻击力: ['基础攻击力', '基础攻击', '攻击力'],
+      力量: ['力量', '力量值'],
+      敏捷: ['敏捷', '敏捷值'],
+      智识: ['智识', '智识值'],
+      意志: ['意志', '意志值'],
+      需求素材: ['需求素材', '素材需求', '需求材料', '材料消耗', '素材消耗', '消耗材料']
+    }
+    const aliases = (aliasMap[label] || [label]).slice().sort((a, b) => b.length - a.length)
+    for (const alias of aliases) {
+      const idx = text.indexOf(alias)
+      if (idx < 0) continue
+      const value = text.slice(idx + alias.length).replace(/^[：:\s-+]+/, '').trim()
+      if (value === '值' || value === '力') continue
+      if (value) return value
+    }
+    return ''
+  }
+
+  extractEliteValuesFromCells(values, cells = []) {
+    const cleanCells = Array.isArray(cells)
+      ? cells.map((s) => String(s || '').trim()).filter(Boolean)
+      : []
+    if (cleanCells.length === 0) return
+
+    let group = ''
+    for (let i = 0; i < cleanCells.length; i++) {
+      const cell = cleanCells[i]
+      const token = this.normalizeEliteToken(cell)
+      if (!token) continue
+
+      if (this.isEliteGroupToken(token)) {
+        group = cell
+        continue
+      }
+
+      const kv = cell.split(/[：:]/).map((s) => s.trim()).filter(Boolean)
+      if (kv.length >= 2) {
+        const colonLabel = this.resolveEliteLabel(kv[0], group)
+        if (colonLabel) {
+          this.applyEliteValue(values, group, colonLabel, kv.slice(1).join('：'))
+          continue
+        }
+      }
+
+      const label = this.resolveEliteLabel(cell, group)
+      if (!label) continue
+
+      let value = this.extractEliteInlineValue(cell, label)
+
+      if (!value) {
+        const nextValues = []
+        for (let j = i + 1; j < cleanCells.length; j++) {
+          const next = cleanCells[j]
+          const nextToken = this.normalizeEliteToken(next)
+          if (!nextToken) continue
+          if (this.isEliteGroupToken(nextToken)) break
+          if (this.resolveEliteLabel(next, group)) break
+          nextValues.push(next)
+          if (label !== '需求素材') break
+        }
+        if (nextValues.length > 0) value = label === '需求素材' ? nextValues.join('、') : nextValues[0]
+      }
+
+      this.applyEliteValue(values, group, label, value)
+    }
+  }
+
+  parseEliteTextLine(values, line) {
+    const text = String(line || '').trim()
+    if (!text) return
+
+    if (text.includes('|')) {
+      const cells = text.split('|').map((s) => s.trim()).filter(Boolean)
+      this.extractEliteValuesFromCells(values, cells)
+      return
+    }
+
+    const segments = text.split(/[，,；;]/).map((s) => s.trim()).filter(Boolean)
+    for (const seg of segments) {
+      const kv = seg.split(/[：:]/).map((s) => s.trim()).filter(Boolean)
+      if (kv.length >= 2) {
+        this.applyEliteValue(values, '', kv[0], kv.slice(1).join('：'))
+      } else {
+        this.extractEliteValuesFromCells(values, [seg])
+      }
+    }
+  }
+
+  buildEliteTableRows(tableLines = [], fallbackLevel = '', textLines = [], options = {}) {
+    const values = {}
+    const tableList = Array.isArray(tableLines) ? tableLines : []
+    const textList = Array.isArray(textLines) ? textLines : []
+    const normalizeMaxLevel = options?.normalizeMaxLevel === true
+    const normalizeInitialLevel = options?.normalizeInitialLevel === true
+    let levelTitle = this.extractEliteLevel(fallbackLevel, tableList, textList) || String(fallbackLevel || '').trim() || '20级'
+    let pendingMaterial = false
+
+    for (const line of tableList) {
+      const cells = String(line || '')
+        .split('|')
+        .map((s) => s.trim())
+        .filter((s) => s !== '')
+      if (cells.length < 1) continue
+      const joined = cells.join('、')
+
+      const lineLevel = this.extractEliteLevel(cells, line)
+      if (lineLevel) levelTitle = lineLevel
+
+      if ((cells[0] === '详细属性' || cells[0] === '属性' || cells[0] === '等级') && cells[1]) {
+        const headerLevel = this.extractEliteLevel(cells[1]) || cells[1]
+        if (headerLevel) levelTitle = headerLevel
+      }
+
+      if (pendingMaterial) {
+        const hasMaterialLabel = cells.some((cell) => this.resolveEliteLabel(cell, '') === '需求素材')
+        if (!hasMaterialLabel && joined) {
+          this.applyEliteValue(values, '', '需求素材', joined)
+          pendingMaterial = false
+          continue
+        }
+        pendingMaterial = false
+      }
+
+      const beforeMaterial = values['需求素材'] || ''
+      this.extractEliteValuesFromCells(values, cells)
+      const afterMaterial = values['需求素材'] || ''
+      const hasMaterialMarker = cells.some((cell) => this.resolveEliteLabel(cell, '') === '需求素材')
+      if (hasMaterialMarker && afterMaterial === beforeMaterial) {
+        pendingMaterial = true
+      }
+    }
+
+    for (const line of textList) {
+      const lineLevel = this.extractEliteLevel(line)
+      if (lineLevel) levelTitle = lineLevel
+      this.parseEliteTextLine(values, line)
+    }
+
+    if (normalizeMaxLevel && String(levelTitle || '').includes('满级')) {
+      levelTitle = '满级'
+    }
+    if (normalizeInitialLevel && String(levelTitle || '').includes('初始')) {
+      levelTitle = '初始'
+    }
+
+    const order = ['基础生命值', '基础攻击力', '力量', '敏捷', '智识', '意志']
+    const rows = [`等级 | ${levelTitle || '—'}`, ...order.map((name) => `${name} | ${values[name] || '—'}`)]
+    return { levelTitle, rows }
+  }
+
   buildOperatorSections(content) {
     const { chapterGroup, widgetMap } = this.getContentMaps(content)
     const sections = []
@@ -573,15 +1016,16 @@ export class EndfieldWiki extends plugin {
         const eliteTabs = this.getTabEntries(eliteWidget)
         if (eliteTabs.length > 0) {
           const lines = []
-          const firstParts = this.renderDocumentParts(content, eliteTabs[0].docId, { includeDataTables: true })
-          const noteLine = firstParts.textLines.find((l) => l.startsWith('注：'))
-          if (noteLine) lines.push(noteLine)
-          lines.push('【精英化】')
-          for (const tab of eliteTabs) {
-            const tabTitle = tab.title || tab.docId
-            lines.push(`【${tabTitle}】`)
+          for (let i = 0; i < eliteTabs.length; i++) {
+            const tab = eliteTabs[i]
             const parts = this.renderDocumentParts(content, tab.docId, { includeDataTables: true })
-            lines.push(...parts.tableLines)
+            const { rows } = this.buildEliteTableRows(parts.tableLines, tab.title || tab.docId, parts.textLines, {
+              normalizeMaxLevel: true,
+              normalizeInitialLevel: true
+            })
+            if (i > 0) lines.push('')
+            lines.push('属性 | 数值')
+            lines.push(...rows)
           }
           sections.push({ title: '能力扩延', lines })
         }
@@ -635,4 +1079,12 @@ export class EndfieldWiki extends plugin {
     return sections
   }
 
+<<<<<<< HEAD
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> 7d10a50 (commit)
+=======
+}
+>>>>>>> c72856b (commit)
