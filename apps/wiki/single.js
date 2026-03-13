@@ -240,6 +240,8 @@ function buildKeyValueTableContent(lines = [], leftHeader = '属性', rightHeade
 function buildWeaponSkillTableContent(chunks = [], chapterTitle = '') {
   const rows = []
   const usedNames = new Set()
+  const usedKvPairs = new Set()
+  let useKeyValueMode = false
 
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i]
@@ -252,6 +254,31 @@ function buildWeaponSkillTableContent(chunks = [], chapterTitle = '') {
     const skillNameBase = declaredTitle || (String(chapterTitle).includes('机制') ? `机制${i + 1}` : `技能${i + 1}`)
     const skillName = skillNameBase.trim() || `技能${i + 1}`
     if (!skillName || isMatrixOnlyTitle(skillName)) continue
+
+    const nonTitleLines = chunkLines.filter((line) => {
+      const t = String(line || '').trim()
+      if (!t) return false
+      if (declaredTitle && t === `【${declaredTitle}】`) return false
+      return !/^【.+】$/.test(t)
+    })
+    const kvPairs = nonTitleLines
+      .map((line) => tryParseKeyValueLine(line))
+      .filter((pair) => Array.isArray(pair) && pair[0] && pair[1])
+
+    // 该分块主要由键值对组成时，直接按“属性|数值”输出，避免“技能|说明”误导展示
+    if (kvPairs.length > 0 && kvPairs.length === nonTitleLines.length) {
+      useKeyValueMode = true
+      for (const [keyRaw, valueRaw] of kvPairs) {
+        const key = String(keyRaw || '').trim()
+        const value = String(valueRaw || '').trim()
+        if (!key || !value) continue
+        const dedup = `${key}=>${value}`
+        if (usedKvPairs.has(dedup)) continue
+        usedKvPairs.add(dedup)
+        rows.push([key, value])
+      }
+      continue
+    }
 
     const detailParts = []
     for (const raw of chunkLines) {
@@ -275,7 +302,7 @@ function buildWeaponSkillTableContent(chunks = [], chapterTitle = '') {
   }
 
   if (rows.length === 0) return ''
-  const tableTitle = String(chapterTitle).includes('机制') ? '机制 | 说明' : '技能 | 说明'
+  const tableTitle = useKeyValueMode ? '属性 | 数值' : (String(chapterTitle).includes('机制') ? '机制 | 说明' : '技能 | 说明')
   return [tableTitle, ...rows.map(([n, d]) => `${n} | ${d}`)].join('\n')
 }
 

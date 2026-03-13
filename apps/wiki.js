@@ -462,9 +462,11 @@ export class EndfieldWiki extends plugin {
 
   parseWikiTableRow(line) {
     if (!line || typeof line !== 'string') return []
+    const trimmedLine = line.trim()
     const cells = line.split('|').map((s) => s.trim())
-    if (cells.length > 0 && cells[0] === '') cells.shift()
-    if (cells.length > 0 && cells[cells.length - 1] === '') cells.pop()
+    // 仅在标准 markdown 外围分隔符场景移除首尾空列，保留真实“空值列”（如：属性 | ）
+    if (trimmedLine.startsWith('|') && cells.length > 0 && cells[0] === '') cells.shift()
+    if (trimmedLine.startsWith('|') && trimmedLine.endsWith('|') && cells.length > 0 && cells[cells.length - 1] === '') cells.pop()
     return cells
   }
 
@@ -483,6 +485,18 @@ export class EndfieldWiki extends plugin {
     return true
   }
 
+  /** 2列键值表是否显式给了表头（如：属性|数值、技能|说明） */
+  isWikiKeyValueHeaderRow(cells = []) {
+    if (!Array.isArray(cells) || cells.length < 2) return false
+    const left = String(cells[0] || '').trim()
+    const right = String(cells[1] || '').trim()
+    if (!left || !right) return false
+    const plainWord = (s) => /^[A-Za-z\u4e00-\u9fa5]{1,8}$/.test(s)
+    if (!plainWord(left) || !plainWord(right)) return false
+    const keywords = new Set(['属性', '数值', '说明', '效果', '内容', '名称', '类型', '项目', '条目', '技能', '机制', '等级', 'RANK', 'Rank', 'rank'])
+    return keywords.has(left) || keywords.has(right)
+  }
+
   buildWikiSectionBlocks(content = '') {
     const lines = String(content || '').split('\n')
     const blocks = []
@@ -499,20 +513,41 @@ export class EndfieldWiki extends plugin {
     const flushTable = () => {
       if (tableBuffer.length === 0) return
       const validRows = tableBuffer.filter((row) => Array.isArray(row) && row.length >= 2 && !this.isWikiTableSeparatorRow(row))
-      if (validRows.length >= 2) {
-        const colCount = validRows.reduce((max, row) => Math.max(max, row.length), 2)
-        const normRows = validRows.map((row) => {
-          const out = row.slice(0, colCount)
-          while (out.length < colCount) out.push('')
-          return out
-        })
+      if (validRows.length === 0) {
+        tableBuffer = []
+        return
+      }
+
+      const colCount = validRows.reduce((max, row) => Math.max(max, row.length), 2)
+      const normRows = validRows.map((row) => {
+        const out = row.slice(0, colCount)
+        while (out.length < colCount) out.push('')
+        return out
+      })
+
+      if (colCount === 2) {
+        const hasExplicitHeader = this.isWikiKeyValueHeaderRow(normRows[0])
+        if (hasExplicitHeader && normRows.length >= 2) {
+          blocks.push({
+            type: 'table',
+            headers: normRows[0],
+            rows: normRows.slice(1)
+          })
+        } else {
+          blocks.push({
+            type: 'table',
+            headers: ['属性', '数值'],
+            rows: normRows
+          })
+        }
+      } else if (normRows.length >= 2) {
         blocks.push({
           type: 'table',
           headers: normRows[0],
           rows: normRows.slice(1)
         })
       } else {
-        for (const row of validRows) textBuffer.push(row.join(' | '))
+        for (const row of normRows) textBuffer.push(row.join(' | '))
       }
       tableBuffer = []
     }
