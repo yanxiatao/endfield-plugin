@@ -65,14 +65,46 @@ function isMaterialConsumptionTitle(title = '') {
   return MATERIAL_CONSUMPTION_RE.test(t) || MATERIAL_SECTION_RE.test(t)
 }
 
+function unwrapTitleToken(text = '') {
+  const raw = String(text || '').trim()
+  const match = raw.match(/^【(.+)】$/)
+  return match ? match[1].trim() : raw
+}
+
+function isMatrixOnlyTitle(title = '') {
+  const t = unwrapTitleToken(title).replace(/\s+/g, '')
+  if (!t || !t.includes('基质')) return false
+  if (/(技能|机制)/.test(t)) return false
+  return true
+}
+
+function stripMatrixContent(text = '') {
+  let out = String(text || '').trim()
+  if (!out) return ''
+  out = out.replace(/[（(][^（）()]*基质[^（）()]*[）)]/g, '').trim()
+  const parts = out
+    .split(/[；;。]/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+  const kept = parts.filter((p) => !MATRIX_RE.test(p))
+  out = kept.join('；').trim()
+  if (!out) return ''
+  out = out.replace(/(?:，|,|、)?\s*(?:并|且)?\s*为?基质[^，,、；;。]*/g, '').trim()
+  return out
+}
+
 function filterSpecialLines(lines = [], options = {}) {
   const removeMaterial = options.removeMaterial !== false
   const removeMatrix = options.removeMatrix === true
-  return normalizeLines(lines).filter((line) => {
-    if (removeMaterial && MATERIAL_CONSUMPTION_RE.test(line)) return false
-    if (removeMatrix && MATRIX_RE.test(line)) return false
-    return true
-  })
+  const out = []
+  for (const line of normalizeLines(lines)) {
+    if (removeMaterial && MATERIAL_CONSUMPTION_RE.test(line)) continue
+    let current = line
+    if (removeMatrix) current = stripMatrixContent(current)
+    if (!String(current || '').trim()) continue
+    out.push(String(current).trim())
+  }
+  return normalizeLines(out)
 }
 
 function sanitizeSectionContent(content = '', options = {}) {
@@ -171,6 +203,7 @@ function mergeSectionsByTitle(sections = []) {
 function tryParseKeyValueLine(line = '') {
   const text = String(line || '').trim()
   if (!text || /^[-:|]+$/.test(text)) return null
+  if (/^【.+】$/.test(text)) return null
 
   if (text.includes('|')) {
     const cells = text.split('|').map((s) => s.trim())
@@ -181,6 +214,9 @@ function tryParseKeyValueLine(line = '') {
 
   const match = text.match(/^【?([^【】:：|]{1,30})】?\s*[：:]\s*(.+)$/)
   if (match) return [match[1].trim(), match[2].trim()]
+
+  const wsMatch = text.match(/^([^【】\s]{1,20})\s+([0-9A-Za-z%+\-./].*)$/)
+  if (wsMatch) return [wsMatch[1].trim(), wsMatch[2].trim()]
   return null
 }
 
@@ -211,11 +247,11 @@ function buildWeaponSkillTableContent(chunks = [], chapterTitle = '') {
     if (chunkLines.length === 0) continue
 
     const declaredTitle = String(chunk?.title || '').trim()
-    if (declaredTitle && MATRIX_RE.test(declaredTitle)) continue
+    if (declaredTitle && isMatrixOnlyTitle(declaredTitle)) continue
 
     const skillNameBase = declaredTitle || (String(chapterTitle).includes('机制') ? `机制${i + 1}` : `技能${i + 1}`)
     const skillName = skillNameBase.trim() || `技能${i + 1}`
-    if (!skillName || MATRIX_RE.test(skillName)) continue
+    if (!skillName || isMatrixOnlyTitle(skillName)) continue
 
     const detailParts = []
     for (const raw of chunkLines) {
@@ -249,7 +285,7 @@ function shouldSkipWeaponSectionTitle(title = '') {
   if (t === '特别提醒') return true
   if (WEAPON_SKIP_SECTION_RE.test(t)) return true
   if (isMaterialConsumptionTitle(t)) return true
-  if (MATRIX_RE.test(t)) return true
+  if (isMatrixOnlyTitle(t)) return true
   return false
 }
 
