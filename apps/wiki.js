@@ -341,7 +341,15 @@ export class EndfieldWiki extends plugin {
     return this.getDocIdsFromChapter(chapter, widgetMap)
   }
 
-<<<<<<< HEAD
+  /** 粗略判断是否为干员百科内容（用于旧文本分段逻辑兼容） */
+  isOperatorContent(content) {
+    const { chapterGroup } = this.getContentMaps(content)
+    return chapterGroup.some((ch) => {
+      const title = ch?.title || ''
+      return title === '能力扩延' || title === '干员潜能'
+    })
+  }
+
   /** 将 content 按章节渲染为纯文本；干员资料无文档时用基础档案并只保留代号/性别/身份认证/生日/种族；排除特别提醒/干员档案 */
   renderWikiContent(content) {
     const docMap = content?.document_map || content?.documentMap || {}
@@ -392,7 +400,6 @@ export class EndfieldWiki extends plugin {
     return lines.join('\n').replace(/\n{3,}/g, '\n\n')
   }
 
-<<<<<<< HEAD
   /**
    * 按章节返回内容，用于合并转发按【干员资料】等标题分段。
    * 返回 { header, sections }，header=【干员】name+caption，sections=[{ chapterTitle, content }]。
@@ -446,16 +453,6 @@ export class EndfieldWiki extends plugin {
     return { header, sections }
   }
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-  renderBlock(block, blockMap, opts = {}) {
-=======
-=======
->>>>>>> 7d10a50 (commit)
-=======
->>>>>>> 8c78072 (commit)
-=======
->>>>>>> 12060e2 (commit)
   normalizeWikiSectionContent(text) {
     return String(text || '')
       .replace(/(?:^|\n)─{6,}(?=\n|$)/g, '')
@@ -607,15 +604,7 @@ export class EndfieldWiki extends plugin {
     })
   }
 
-<<<<<<< HEAD
-  renderBlock(block, blockMap) {
-<<<<<<< HEAD
->>>>>>> 2adb872 (commit)
-=======
->>>>>>> 7d10a50 (commit)
-=======
   renderBlock(block, blockMap, opts = {}) {
->>>>>>> c72856b (commit)
     if (!block) return ''
     switch (block.kind) {
       case 'text': {
@@ -1075,12 +1064,4 @@ export class EndfieldWiki extends plugin {
     return sections
   }
 
-<<<<<<< HEAD
-<<<<<<< HEAD
 }
-=======
-}
->>>>>>> 7d10a50 (commit)
-=======
-}
->>>>>>> c72856b (commit)
