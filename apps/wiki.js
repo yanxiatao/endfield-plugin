@@ -72,10 +72,6 @@ export class EndfieldWiki extends plugin {
     this._wikiTemplateCache = new Map()
   }
 
-<<<<<<< HEAD
-=======
-
->>>>>>> 7d10a50 (commit)
   /**
    * 解析 :wiki [干员|武器|...] xxx，返回 { subTypeId, name }。
    * 无前缀时默认 subTypeId='1'（干员）；按标签长度降序匹配，避免短标签抢匹配。
